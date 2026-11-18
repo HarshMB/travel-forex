@@ -1,142 +1,99 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  ArrowRightLeft, 
-  RefreshCw, 
-  Receipt, 
-  Banknote, 
-  Calculator, 
+  ArrowLeftRight, 
+  RotateCw, 
+  TrendingUp, 
   TrendingDown, 
-  ShieldCheck, 
-  SlidersHorizontal,
-  Coins,
-  Plus,
-  Trash2
+  Calculator, 
+  Banknote, 
+  Coins, 
+  Info, 
+  Receipt, 
+  Plus, 
+  Trash2 
 } from 'lucide-react';
 
-// Fallback rates if API fetch is throttled or offline
+// Default / fallback interbank reference exchange rates (relative to 1 USD)
 const FALLBACK_RATES = {
-  USD_INR: 86.85,
-  USD_VND: 25420,
-  INR_VND: 292.68,
+  USD: 1.0,
+  INR: 86.85,    // 1 USD ~ 86.85 INR
+  VND: 25420.0,  // 1 USD ~ 25,420 VND
 };
 
-// Preset denomination templates for all 3 currencies
-const CURRENCY_NOTE_TEMPLATES = {
-  USD: [
-    { id: 'usd_100', denom: 100, count: 5, rate: 0 },
-    { id: 'usd_50',  denom: 50,  count: 2, rate: 0 },
-    { id: 'usd_20',  denom: 20,  count: 3, rate: 0 },
-    { id: 'usd_10',  denom: 10,  count: 2, rate: 0 },
-    { id: 'usd_5',   denom: 5,   count: 2, rate: 0 },
-    { id: 'usd_1',   denom: 1,   count: 5, rate: 0 },
-  ],
-  INR: [
-    { id: 'inr_500', denom: 500, count: 20, rate: 0 },
-    { id: 'inr_200', denom: 200, count: 10, rate: 0 },
-    { id: 'inr_100', denom: 100, count: 10, rate: 0 },
-    { id: 'inr_50',  denom: 50,  count: 10, rate: 0 },
-    { id: 'inr_20',  denom: 20,  count: 0,  rate: 0 },
-    { id: 'inr_10',  denom: 10,  count: 0,  rate: 0 },
-  ],
-  VND: [
-    { id: 'vnd_500k', denom: 500000, count: 10, rate: 0 },
-    { id: 'vnd_200k', denom: 200000, count: 10, rate: 0 },
-    { id: 'vnd_100k', denom: 100000, count: 5,  rate: 0 },
-    { id: 'vnd_50k',  denom: 50000,  count: 4,  rate: 0 },
-    { id: 'vnd_20k',  denom: 20000,  count: 5,  rate: 0 },
-    { id: 'vnd_10k',  denom: 10000,  count: 5,  rate: 0 },
-  ]
-};
+const CURRENCIES = [
+  { code: 'INR', name: 'Indian Rupee', symbol: '₹', flag: '🇮🇳' },
+  { code: 'USD', name: 'US Dollar', symbol: '$', flag: '🇺🇸' },
+  { code: 'VND', name: 'Vietnamese Dong', symbol: '₫', flag: '🇻🇳' },
+];
 
-// Standard denomination options for dropdown selection
-const STANDARD_DENOMS = {
+// Standard denominations per currency
+const STANDARD_DENOMINATIONS = {
   USD: [100, 50, 20, 10, 5, 2, 1],
   INR: [500, 200, 100, 50, 20, 10],
-  VND: [500000, 200000, 100000, 50000, 20000, 10000, 5000, 2000, 1000],
+  VND: [500000, 200000, 100000, 50000, 20000, 10000],
 };
 
 export default function App() {
-  // Live Rates State
-  const [liveRates, setLiveRates] = useState(FALLBACK_RATES);
+  // Live rates state
+  const [rates, setRates] = useState(FALLBACK_RATES);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [isLoadingRates, setIsLoadingRates] = useState(false);
-  const [reverseTicker, setReverseTicker] = useState(false);
+  const [rateError, setRateError] = useState(null);
 
-  // Core Forex Transaction Settings
-  const [tradeAction, setTradeAction] = useState('BUY'); // 'BUY' or 'SELL'
-  const [sourceCurrency, setSourceCurrency] = useState('INR'); // You give / pay
-  const [targetCurrency, setTargetCurrency] = useState('USD'); // You receive / get
-  const [rateMode, setRateMode] = useState('UNIFORM'); // 'UNIFORM' or 'TIERED'
+  // Reference bar reverse toggle
+  const [invertReference, setInvertReference] = useState(false);
 
-  // Uniform Rate Mode inputs
-  const [targetAmountDesired, setTargetAmountDesired] = useState(1000); 
-  const [uniformRate, setUniformRate] = useState(87.80);
+  // Core Calculator Configuration
+  const [actionType, setActionType] = useState('buy'); // 'buy' or 'sell'
+  const [sourceCurrency, setSourceCurrency] = useState('INR');
+  const [targetCurrency, setTargetCurrency] = useState('USD');
+  const [rateMode, setRateMode] = useState('single'); // 'single' or 'tiered'
 
-  // Dynamic Custom Note Batch Rows State
-  const [notesDenomCurrency, setNotesDenomCurrency] = useState('USD');
+  // Single Rate Mode Inputs
+  const [singleAmount, setSingleAmount] = useState(50000); // Amount in Source Currency if buying, or Target if selling
+  const [singleRate, setSingleRate] = useState(87.50);     // Quoted exchange rate
+
+  // Dynamic Tiered Note Batches
+  // Each batch is an item: { id, denom, count, rate }
   const [noteBatches, setNoteBatches] = useState([
-    {
-      id: 'batch_1',
-      denom: 100,
-      condition: 'Crisp / Mint',
-      count: 5,
-      rate: 25650
-    },
-    {
-      id: 'batch_2',
-      denom: 100,
-      condition: 'Stained / Folded',
-      count: 2,
-      rate: 25100
-    },
-    {
-      id: 'batch_3',
-      denom: 50,
-      condition: 'Good Condition',
-      count: 2,
-      rate: 25450
-    },
-    {
-      id: 'batch_4',
-      denom: 20,
-      condition: 'Crisp / Mint',
-      count: 3,
-      rate: 25200
-    }
+    { id: 1, denom: 100, count: 5, rate: 25650 },
+    { id: 2, denom: 100, count: 2, rate: 25200 },
+    { id: 3, denom: 50, count: 2, rate: 25550 },
+    { id: 4, denom: 20, count: 5, rate: 24900 },
   ]);
 
-  // Fees & Editable GST
-  const [serviceFee, setServiceFee] = useState(150);
-  const [otherCharges, setOtherCharges] = useState(0);
-  const [gstAmount, setGstAmount] = useState(158.04);
-  const [isGstAuto, setIsGstAuto] = useState(true);
+  // Fees & Extra Charges
+  const [serviceFee, setServiceFee] = useState(150);      // Flat service fee in source currency
+  const [gstAmount, setGstAmount] = useState(90);         // Editable GST amount
+  const [otherCharges, setOtherCharges] = useState(0);    // Any courier / doorstep fee
 
-  // Quick street converter
-  const [quickAmount, setQuickAmount] = useState(100);
-  const [quickFrom, setQuickFrom] = useState('USD');
-  const [quickTo, setQuickTo] = useState('VND');
+  // Quick street pocket converter state
+  const [pocketAmount, setPocketAmount] = useState(500000);
+  const [pocketFrom, setPocketFrom] = useState('VND');
+  const [pocketTo, setPocketTo] = useState('INR');
 
-  // Fetch Live Reference Rates
+  // Fetch real-time exchange rates
   const fetchLiveRates = async () => {
     setIsLoadingRates(true);
+    setRateError(null);
     try {
-      const res = await fetch('https://open.er-api.com/v6/latest/USD');
-      if (!res.ok) throw new Error('Network error');
-      const data = await res.json();
+      const response = await fetch('https://open.er-api.com/v6/latest/USD');
+      const data = await response.json();
       if (data && data.rates) {
-        const usdInr = data.rates.INR || FALLBACK_RATES.USD_INR;
-        const usdVnd = data.rates.VND || FALLBACK_RATES.USD_VND;
-        const inrVnd = usdVnd / usdInr;
-        setLiveRates({
-          USD_INR: parseFloat(usdInr.toFixed(2)),
-          USD_VND: Math.round(usdVnd),
-          INR_VND: parseFloat(inrVnd.toFixed(2)),
+        setRates({
+          USD: 1.0,
+          INR: parseFloat(data.rates.INR) || FALLBACK_RATES.INR,
+          VND: parseFloat(data.rates.VND) || FALLBACK_RATES.VND,
         });
         setLastUpdated(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      } else {
+        throw new Error('Invalid rate response');
       }
-    } catch {
-      setLiveRates(FALLBACK_RATES);
-      setLastUpdated('Cached Baseline');
+    } catch (err) {
+      console.warn('Using fallback FX rates:', err?.message);
+      setRates(FALLBACK_RATES);
+      setRateError('Using estimated baseline rates.');
+      setLastUpdated(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
     } finally {
       setIsLoadingRates(false);
     }
@@ -146,1312 +103,1245 @@ export default function App() {
     fetchLiveRates();
   }, []);
 
-  // Standard Market Interbank Rate definition
-  const marketBenchmarkRate = useMemo(() => {
-    if (sourceCurrency === targetCurrency) return 1;
-    if (sourceCurrency === 'INR' && targetCurrency === 'USD') return liveRates.USD_INR;
-    if (sourceCurrency === 'USD' && targetCurrency === 'INR') return 1 / liveRates.USD_INR;
-    if (sourceCurrency === 'USD' && targetCurrency === 'VND') return liveRates.USD_VND;
-    if (sourceCurrency === 'VND' && targetCurrency === 'USD') return 1 / liveRates.USD_VND;
-    if (sourceCurrency === 'INR' && targetCurrency === 'VND') return liveRates.INR_VND;
-    if (sourceCurrency === 'VND' && targetCurrency === 'INR') return 1 / liveRates.INR_VND;
-    return 1;
-  }, [sourceCurrency, targetCurrency, liveRates]);
+  // Compute live fair benchmark rate for the current pair
+  const liveInterbankRate = useMemo(() => {
+    if (sourceCurrency === targetCurrency) return 1.0;
+    const fromUSD = rates[sourceCurrency] || 1;
+    const toUSD = rates[targetCurrency] || 1;
+    // Units of target currency per 1 source currency
+    return toUSD / fromUSD;
+  }, [rates, sourceCurrency, targetCurrency]);
 
-  // Meaningful rate unit label: explicitly states price of 1 base note in target units
-  const rateUnitLabel = useMemo(() => {
-    return `Price of 1 ${notesDenomCurrency} in ${targetCurrency}`;
-  }, [notesDenomCurrency, targetCurrency]);
-
-  // Sync default rate and default batch on currency pair change
-  useEffect(() => {
-    const defaultNoteCurr = (sourceCurrency === 'USD' || targetCurrency === 'USD') ? 'USD' : sourceCurrency;
-    setNotesDenomCurrency(defaultNoteCurr);
-
-    let defaultBaseRate = marketBenchmarkRate;
-    if (sourceCurrency === 'INR' && targetCurrency === 'USD') {
-      defaultBaseRate = tradeAction === 'BUY' ? liveRates.USD_INR + 0.95 : liveRates.USD_INR - 1.25;
-    } else if (sourceCurrency === 'USD' && targetCurrency === 'VND') {
-      defaultBaseRate = tradeAction === 'BUY' ? liveRates.USD_VND + 100 : liveRates.USD_VND - 250;
-    } else if (sourceCurrency === 'VND' && targetCurrency === 'USD') {
-      defaultBaseRate = tradeAction === 'BUY' ? liveRates.USD_VND + 300 : liveRates.USD_VND - 200;
-    } else if (sourceCurrency === 'INR' && targetCurrency === 'VND') {
-      defaultBaseRate = liveRates.INR_VND * 0.96;
+  // Ensure Source and Target are distinct
+  const handleSourceChange = (newSource) => {
+    if (newSource === targetCurrency) {
+      setTargetCurrency(sourceCurrency);
     }
+    setSourceCurrency(newSource);
+  };
 
-    setUniformRate(Number(defaultBaseRate.toFixed(2)));
-  }, [sourceCurrency, targetCurrency, tradeAction, liveRates, marketBenchmarkRate]);
+  const handleTargetChange = (newTarget) => {
+    if (newTarget === sourceCurrency) {
+      setSourceCurrency(targetCurrency);
+    }
+    setTargetCurrency(newTarget);
+  };
 
-  // Currency select handlers
   const handleSwapCurrencies = () => {
-    const prevSource = sourceCurrency;
+    const temp = sourceCurrency;
     setSourceCurrency(targetCurrency);
-    setTargetCurrency(prevSource);
+    setTargetCurrency(temp);
   };
 
-  const handleSourceSelect = (val) => {
-    if (val === targetCurrency) setTargetCurrency(sourceCurrency);
-    setSourceCurrency(val);
-  };
+  // Determine what currency the notes are physically in
+  const notesCurrency = useMemo(() => {
+    if (sourceCurrency === 'USD' || targetCurrency === 'USD') return 'USD';
+    return sourceCurrency;
+  }, [sourceCurrency, targetCurrency]);
 
-  const handleTargetSelect = (val) => {
-    if (val === sourceCurrency) setSourceCurrency(targetCurrency);
-    setTargetCurrency(val);
-  };
+  const notesSymbol = CURRENCIES.find(c => c.code === notesCurrency)?.symbol || '$';
+  const sourceSymbol = CURRENCIES.find(c => c.code === sourceCurrency)?.symbol || '';
+  const targetSymbol = CURRENCIES.find(c => c.code === targetCurrency)?.symbol || '';
 
-  // Add a new row to Note Batches
-  const handleAddNoteBatch = () => {
-    const defaultDenom = notesDenomCurrency === 'USD' ? 100 : (notesDenomCurrency === 'INR' ? 500 : 500000);
-    const defaultRate = (notesDenomCurrency === 'USD' && targetCurrency === 'VND') 
-      ? liveRates.USD_VND 
-      : uniformRate;
+  // Clear descriptive Rate column header: "Price of 1 [Notes Currency] in [Target/Other Currency]"
+  const rateUnitLabel = useMemo(() => {
+    if (notesCurrency === 'USD' && (targetCurrency === 'VND' || sourceCurrency === 'VND')) {
+      return 'Price of 1 USD in VND';
+    }
+    if (notesCurrency === 'USD' && (targetCurrency === 'INR' || sourceCurrency === 'INR')) {
+      return 'Price of 1 USD in INR';
+    }
+    if (notesCurrency === 'INR' && targetCurrency === 'USD') {
+      return 'Price of 1 INR in USD';
+    }
+    if (notesCurrency === 'INR' && targetCurrency === 'VND') {
+      return 'Price of 1 INR in VND';
+    }
+    if (notesCurrency === 'VND') {
+      return `Price of 1 VND in ${targetCurrency}`;
+    }
+    return `Price of 1 ${notesCurrency} in ${targetCurrency}`;
+  }, [notesCurrency, sourceCurrency, targetCurrency]);
 
-    setNoteBatches(prev => [
-      ...prev,
-      {
-        id: 'batch_' + Date.now(),
-        denom: defaultDenom,
-        condition: 'Good Condition',
-        count: 1,
-        rate: defaultRate
-      }
-    ]);
-  };
-
-  // Remove a row (ensure at least 1 remains)
-  const handleRemoveNoteBatch = (id) => {
-    if (noteBatches.length <= 1) return;
-    setNoteBatches(prev => prev.filter(b => b.id !== id));
-  };
-
-  // Modify individual denomination batch row
-  const handleBatchCountChange = (id, count) => {
-    const val = parseInt(count, 10);
-    setNoteBatches(prev => prev.map(b => b.id === id ? { ...b, count: isNaN(val) ? 0 : Math.max(0, val) } : b));
-  };
-
-  const handleBatchRateChange = (id, rate) => {
-    const val = parseFloat(rate);
-    setNoteBatches(prev => prev.map(b => b.id === id ? { ...b, rate: isNaN(val) ? 0 : val } : b));
-  };
-
-  const handleBatchDenomChange = (id, denom) => {
-    const val = parseFloat(denom);
-    setNoteBatches(prev => prev.map(b => b.id === id ? { ...b, denom: isNaN(val) ? 0 : val } : b));
-  };
-
-  const handleNotesCurrencyChange = (curr) => {
-    setNotesDenomCurrency(curr);
-    const standardList = STANDARD_DENOMS[curr] || [100];
+  // Dynamic Batch Handlers
+  const handleAddBatch = () => {
+    const standardList = STANDARD_DENOMINATIONS[notesCurrency] || [100, 50, 20, 10];
     const defaultDenom = standardList[0] || 100;
-    const defaultRate = (curr === 'USD' && targetCurrency === 'VND')
-      ? liveRates.USD_VND
-      : uniformRate;
-
+    const defaultRate = noteBatches.length > 0 ? noteBatches[0].rate : 1;
     setNoteBatches([
-      { id: 'batch_1', denom: defaultDenom, count: 5, rate: defaultRate },
-      { id: 'batch_2', denom: defaultDenom, count: 2, rate: defaultRate }
+      ...noteBatches,
+      {
+        id: Date.now(),
+        denom: defaultDenom,
+        count: 1,
+        rate: defaultRate,
+      }
     ]);
   };
 
-  // Preset quick scenarios
-  const applyPreset = (type) => {
-    if (type === 'INR_TO_USD') {
-      setTradeAction('BUY');
-      setSourceCurrency('INR');
-      setTargetCurrency('USD');
-      setRateMode('UNIFORM');
-      setTargetAmountDesired(1000);
-      setUniformRate(Number((liveRates.USD_INR + 0.90).toFixed(2)));
-      setServiceFee(150);
-      setOtherCharges(0);
-      setIsGstAuto(true);
-    } else if (type === 'USD_TO_VND_MULTI_RATES') {
-      setTradeAction('BUY');
-      setSourceCurrency('USD');
-      setTargetCurrency('VND');
-      setRateMode('TIERED');
-      setNotesDenomCurrency('USD');
-      setServiceFee(0);
-      setOtherCharges(0);
-      setGstAmount(0);
-      setIsGstAuto(false);
-      setNoteBatches([
-        { id: 'b_1', denom: 100, count: 5, rate: liveRates.USD_VND + 180 },
-        { id: 'b_2', denom: 100, count: 2, rate: liveRates.USD_VND - 100 },
-        { id: 'b_3', denom: 50,  count: 2, rate: liveRates.USD_VND + 80 },
-        { id: 'b_4', denom: 20,  count: 3, rate: liveRates.USD_VND - 150 },
-      ]);
-    } else if (type === 'VND_BUYBACK') {
-      setTradeAction('SELL');
-      setSourceCurrency('VND');
-      setTargetCurrency('INR');
-      setRateMode('UNIFORM');
-      setTargetAmountDesired(5000000);
-      setUniformRate(Number((liveRates.INR_VND * 1.08).toFixed(2)));
-      setServiceFee(0);
-      setOtherCharges(0);
-      setGstAmount(0);
-      setIsGstAuto(false);
-    }
+  const handleRemoveBatch = (id) => {
+    if (noteBatches.length <= 1) return;
+    setNoteBatches(noteBatches.filter(b => b.id !== id));
   };
 
-  // ================= MAIN CORE ENGINE CALCULATION =================
-  const calculations = useMemo(() => {
-    let baseConversionCostInSource = 0; // Pure currency conversion out-of-pocket
-    let netTargetUnitsReceived = 0;      // Actual units received in target currency
-    let weightedEffectiveRate = 0;       // Unit rate across notes or uniform rate
-    let noteBatchesSummary = [];
+  const handleBatchChange = (id, field, value) => {
+    setNoteBatches(noteBatches.map(b => {
+      if (b.id === id) {
+        return { ...b, [field]: value };
+      }
+      return b;
+    }));
+  };
 
-    if (rateMode === 'UNIFORM') {
-      const targetDesired = Math.max(0, Number(targetAmountDesired) || 0);
-      const rate = Math.max(0, Number(uniformRate) || 0);
-      weightedEffectiveRate = rate;
+  // Calculations for Tiered Notes
+  const tieredTotals = useMemo(() => {
+    let totalNotesCount = 0;
+    let totalFaceValue = 0;
+    let totalConvertedYield = 0;
 
-      if (tradeAction === 'BUY') {
-        if (sourceCurrency === 'USD' && targetCurrency === 'VND') {
-          baseConversionCostInSource = targetDesired;
-          netTargetUnitsReceived = targetDesired * rate;
-        } else if (sourceCurrency === 'INR' && targetCurrency === 'VND') {
-          baseConversionCostInSource = targetDesired;
-          netTargetUnitsReceived = targetDesired * rate;
+    noteBatches.forEach(batch => {
+      const count = Number(batch.count) || 0;
+      const denom = Number(batch.denom) || 0;
+      const rate = Number(batch.rate) || 0;
+      const faceVal = count * denom;
+      const yieldAmt = faceVal * rate;
+
+      totalNotesCount += count;
+      totalFaceValue += faceVal;
+      totalConvertedYield += yieldAmt;
+    });
+
+    const weightedAvgRate = totalFaceValue > 0 ? totalConvertedYield / totalFaceValue : 0;
+
+    return {
+      totalNotesCount,
+      totalFaceValue,
+      totalConvertedYield,
+      weightedAvgRate,
+    };
+  }, [noteBatches]);
+
+  // Unified Conversion Computation
+  const calculation = useMemo(() => {
+    let baseSourcePaid = 0;
+    let baseTargetReceived = 0;
+    let effectiveRate = 0;
+
+    if (rateMode === 'single') {
+      const amt = Number(singleAmount) || 0;
+      const rate = Number(singleRate) || 1;
+
+      if (actionType === 'buy') {
+        if (sourceCurrency === 'INR' && targetCurrency === 'USD') {
+          baseSourcePaid = amt;
+          baseTargetReceived = rate > 0 ? amt / rate : 0;
+          effectiveRate = rate;
+        } else if (sourceCurrency === 'USD' && targetCurrency === 'VND') {
+          baseSourcePaid = amt;
+          baseTargetReceived = amt * rate;
+          effectiveRate = rate;
+        } else {
+          baseSourcePaid = amt;
+          baseTargetReceived = amt * rate;
+          effectiveRate = rate;
+        }
+      } else {
+        // Sell / Buyback mode
+        if (sourceCurrency === 'USD' && targetCurrency === 'INR') {
+          baseSourcePaid = amt;
+          baseTargetReceived = amt * rate;
+          effectiveRate = rate;
         } else if (sourceCurrency === 'VND' && targetCurrency === 'USD') {
-          netTargetUnitsReceived = targetDesired;
-          baseConversionCostInSource = targetDesired * rate;
+          baseSourcePaid = amt;
+          baseTargetReceived = rate > 0 ? amt / rate : 0;
+          effectiveRate = rate;
         } else {
-          netTargetUnitsReceived = targetDesired;
-          baseConversionCostInSource = targetDesired * rate;
-        }
-      } else {
-        // SELL / BUYBACK
-        if (sourceCurrency === 'VND' && targetCurrency === 'USD') {
-          baseConversionCostInSource = targetDesired;
-          netTargetUnitsReceived = rate > 0 ? (targetDesired / rate) : 0;
-        } else if (sourceCurrency === 'USD' && targetCurrency === 'INR') {
-          baseConversionCostInSource = targetDesired;
-          netTargetUnitsReceived = targetDesired * rate;
-        } else {
-          baseConversionCostInSource = targetDesired;
-          netTargetUnitsReceived = targetDesired * rate;
+          baseSourcePaid = amt;
+          baseTargetReceived = amt * rate;
+          effectiveRate = rate;
         }
       }
     } else {
-      // DYNAMIC TIERED NOTE BATCH MODE
-      let totalNotesCount = 0;
-      let totalNotesValue = 0;
-      let totalYieldValue = 0;
-
-      noteBatchesSummary = noteBatches.map(b => {
-        const count = Math.max(0, b.count || 0);
-        const faceSum = (b.denom || 0) * count;
-        const rowYield = faceSum * (b.rate || 0);
-        totalNotesCount += count;
-        totalNotesValue += faceSum;
-        totalYieldValue += rowYield;
-        return {
-          ...b,
-          faceSum,
-          rowYield
-        };
-      });
-
-      if (notesDenomCurrency === sourceCurrency) {
-        baseConversionCostInSource = totalNotesValue;
-        netTargetUnitsReceived = totalYieldValue;
-      } else if (notesDenomCurrency === targetCurrency && sourceCurrency === 'INR' && targetCurrency === 'USD') {
-        netTargetUnitsReceived = totalNotesValue;
-        baseConversionCostInSource = totalYieldValue;
+      // Tiered Note Rates Mode
+      if (actionType === 'buy') {
+        if (sourceCurrency === 'INR' && targetCurrency === 'USD') {
+          baseTargetReceived = tieredTotals.totalFaceValue;
+          baseSourcePaid = tieredTotals.totalConvertedYield;
+          effectiveRate = tieredTotals.weightedAvgRate;
+        } else if (sourceCurrency === 'USD' && targetCurrency === 'VND') {
+          baseSourcePaid = tieredTotals.totalFaceValue;
+          baseTargetReceived = tieredTotals.totalConvertedYield;
+          effectiveRate = tieredTotals.weightedAvgRate;
+        } else {
+          baseSourcePaid = tieredTotals.totalFaceValue;
+          baseTargetReceived = tieredTotals.totalConvertedYield;
+          effectiveRate = tieredTotals.weightedAvgRate;
+        }
       } else {
-        baseConversionCostInSource = totalNotesValue;
-        netTargetUnitsReceived = totalYieldValue;
+        // Sell / Buyback
+        baseSourcePaid = tieredTotals.totalFaceValue;
+        baseTargetReceived = tieredTotals.totalConvertedYield;
+        effectiveRate = tieredTotals.weightedAvgRate;
       }
-
-      weightedEffectiveRate = totalNotesValue > 0 ? (totalYieldValue / totalNotesValue) : 0;
     }
 
-    // Auto-calculate GST (0.18% of Base Cost)
-    const currentGst = isGstAuto ? (baseConversionCostInSource * 0.0018) : Number(gstAmount || 0);
+    // Auto GST calculation (Total Base Amount * 0.18%)
+    const autoGstValue = parseFloat(((baseSourcePaid * 0.18) / 100).toFixed(2));
 
-    // Final Net Calculations for BUY vs SELL
+    // Net Out-of-pocket & Final Received in hand
+    const feeTotal = (Number(serviceFee) || 0) + (Number(gstAmount) || 0) + (Number(otherCharges) || 0);
+
     let totalMoneyToPay = 0;
-    let netCashReceivedInHand = 0;
+    let netInHand = 0;
 
-    if (tradeAction === 'BUY') {
-      totalMoneyToPay = baseConversionCostInSource + Number(serviceFee || 0) + Number(otherCharges || 0) + currentGst;
-      netCashReceivedInHand = netTargetUnitsReceived;
+    if (actionType === 'buy') {
+      totalMoneyToPay = baseSourcePaid + feeTotal;
+      netInHand = baseTargetReceived;
     } else {
-      // In Sell/Buyback mode: fees/GST reduce the final payout received
-      totalMoneyToPay = baseConversionCostInSource;
-      netCashReceivedInHand = Math.max(0, netTargetUnitsReceived - Number(serviceFee || 0) - Number(otherCharges || 0) - currentGst);
+      totalMoneyToPay = baseSourcePaid;
+      netInHand = Math.max(0, baseTargetReceived - feeTotal);
     }
 
-    // ================= PURE DEALER SPREAD & LOSS ANALYSIS =================
-    // STRICT RULE: Exclude all service fees, charges, and GST.
-    let pureMarketFairCost = 0;
+    // Pure Dealer Exchange Loss & Spread Analysis (WITHOUT GST and WITHOUT fees)
+    let fairTargetPayout = 0;
+    let fairSourceRequired = 0;
 
     if (sourceCurrency === 'INR' && targetCurrency === 'USD') {
-      pureMarketFairCost = netTargetUnitsReceived * liveRates.USD_INR;
+      const fairRateUSDINR = rates.INR;
+      fairTargetPayout = fairRateUSDINR > 0 ? baseSourcePaid / fairRateUSDINR : 0;
+      fairSourceRequired = baseTargetReceived * fairRateUSDINR;
     } else if (sourceCurrency === 'USD' && targetCurrency === 'VND') {
-      pureMarketFairCost = baseConversionCostInSource * liveRates.USD_VND;
-    } else if (sourceCurrency === 'VND' && targetCurrency === 'USD') {
-      pureMarketFairCost = netTargetUnitsReceived * liveRates.USD_VND;
-    } else if (sourceCurrency === 'INR' && targetCurrency === 'VND') {
-      pureMarketFairCost = baseConversionCostInSource * liveRates.INR_VND;
-    } else if (sourceCurrency === 'USD' && targetCurrency === 'INR') {
-      pureMarketFairCost = baseConversionCostInSource * liveRates.USD_INR;
+      const fairRateUSDVND = rates.VND;
+      fairTargetPayout = baseSourcePaid * fairRateUSDVND;
+      fairSourceRequired = fairRateUSDVND > 0 ? baseTargetReceived / fairRateUSDVND : 0;
     } else {
-      pureMarketFairCost = baseConversionCostInSource;
+      fairTargetPayout = baseSourcePaid * liveInterbankRate;
+      fairSourceRequired = liveInterbankRate > 0 ? baseTargetReceived / liveInterbankRate : 0;
     }
 
+    // Pure Conversion Loss calculation
     let pureSpreadLoss = 0;
-    let pureLossPercentage = 0;
+    let pureSpreadPercent = 0;
+    let isFavorable = false;
 
-    if (tradeAction === 'BUY') {
-      if (sourceCurrency === 'USD' && targetCurrency === 'VND') {
-        pureSpreadLoss = Math.max(0, pureMarketFairCost - netTargetUnitsReceived);
-        pureLossPercentage = pureMarketFairCost > 0 ? (pureSpreadLoss / pureMarketFairCost) * 100 : 0;
+    if (actionType === 'buy') {
+      const diff = baseSourcePaid - fairSourceRequired;
+      if (diff > 0) {
+        pureSpreadLoss = diff;
+        pureSpreadPercent = fairSourceRequired > 0 ? (diff / fairSourceRequired) * 100 : 0;
       } else {
-        pureSpreadLoss = Math.max(0, baseConversionCostInSource - pureMarketFairCost);
-        pureLossPercentage = pureMarketFairCost > 0 ? (pureSpreadLoss / pureMarketFairCost) * 100 : 0;
+        isFavorable = true;
+        pureSpreadLoss = Math.abs(diff);
+        pureSpreadPercent = fairSourceRequired > 0 ? (Math.abs(diff) / fairSourceRequired) * 100 : 0;
       }
     } else {
-      // SELL / BUYBACK
-      if (sourceCurrency === 'USD' && targetCurrency === 'INR') {
-        const expectedFairInr = baseConversionCostInSource * liveRates.USD_INR;
-        pureSpreadLoss = Math.max(0, expectedFairInr - netTargetUnitsReceived);
-        pureLossPercentage = expectedFairInr > 0 ? (pureSpreadLoss / expectedFairInr) * 100 : 0;
+      const diff = fairTargetPayout - baseTargetReceived;
+      if (diff > 0) {
+        pureSpreadLoss = diff;
+        pureSpreadPercent = fairTargetPayout > 0 ? (diff / fairTargetPayout) * 100 : 0;
       } else {
-        pureSpreadLoss = Math.max(0, pureMarketFairCost - netTargetUnitsReceived);
-        pureLossPercentage = pureMarketFairCost > 0 ? (pureSpreadLoss / pureMarketFairCost) * 100 : 0;
+        isFavorable = true;
+        pureSpreadLoss = Math.abs(diff);
+        pureSpreadPercent = fairTargetPayout > 0 ? (Math.abs(diff) / fairTargetPayout) * 100 : 0;
       }
     }
 
     return {
-      baseConversionCostInSource,
-      netTargetUnitsReceived,
-      weightedEffectiveRate,
-      currentGst,
+      baseSourcePaid,
+      baseTargetReceived,
+      effectiveRate,
+      autoGstValue,
+      feeTotal,
       totalMoneyToPay,
-      netCashReceivedInHand,
+      netInHand,
       pureSpreadLoss,
-      pureLossPercentage,
-      pureMarketFairCost,
-      noteBatchesSummary
+      pureSpreadPercent,
+      isFavorable,
+      fairTargetPayout,
+      fairSourceRequired,
     };
   }, [
-    tradeAction,
+    actionType,
+    rateMode,
+    singleAmount,
+    singleRate,
     sourceCurrency,
     targetCurrency,
-    rateMode,
-    targetAmountDesired,
-    uniformRate,
-    noteBatches,
-    notesDenomCurrency,
+    tieredTotals,
     serviceFee,
-    otherCharges,
     gstAmount,
-    isGstAuto,
-    liveRates
+    otherCharges,
+    rates,
+    liveInterbankRate
   ]);
 
-  // Keep manual GST synchronized when auto mode is enabled
-  useEffect(() => {
-    if (isGstAuto) {
-      setGstAmount(Number((calculations.baseConversionCostInSource * 0.0018).toFixed(2)));
-    }
-  }, [calculations.baseConversionCostInSource, isGstAuto]);
+  // Pocket Street Converter Quick Result
+  const pocketResult = useMemo(() => {
+    const amt = Number(pocketAmount) || 0;
+    if (pocketFrom === pocketTo) return amt;
+    const fromUSD = rates[pocketFrom] || 1;
+    const toUSD = rates[pocketTo] || 1;
+    return (amt / fromUSD) * toUSD;
+  }, [pocketAmount, pocketFrom, pocketTo, rates]);
 
-  // Quick converter result
-  const quickConverted = useMemo(() => {
-    const amt = parseFloat(quickAmount) || 0;
-    if (quickFrom === quickTo) return amt;
-
-    let inUsd = amt;
-    if (quickFrom === 'INR') inUsd = amt / liveRates.USD_INR;
-    else if (quickFrom === 'VND') inUsd = amt / liveRates.USD_VND;
-
-    if (quickTo === 'USD') return inUsd;
-    if (quickTo === 'INR') return inUsd * liveRates.USD_INR;
-    if (quickTo === 'VND') return inUsd * liveRates.USD_VND;
-    return inUsd;
-  }, [quickAmount, quickFrom, quickTo, liveRates]);
-
-  const formatNum = (val, decimals = 0) => {
-    if (isNaN(val) || val === null) return '0';
-    return Number(val).toLocaleString('en-IN', {
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
-    });
+  // Quick Preset Handlers
+  const handlePresetIndiaToUSD = () => {
+    setActionType('buy');
+    setSourceCurrency('INR');
+    setTargetCurrency('USD');
+    setRateMode('single');
+    setSingleAmount(50000);
+    setSingleRate(parseFloat((rates.INR * 1.012).toFixed(2)));
+    setServiceFee(150);
+    const estGst = parseFloat(((50000 * 0.18) / 100).toFixed(2));
+    setGstAmount(estGst);
   };
 
-  const getCurrencySymbol = (curr) => {
-    if (curr === 'INR') return '₹';
-    if (curr === 'USD') return '$';
-    if (curr === 'VND') return '₫';
-    return '';
+  const handlePresetVietnamUSDToVND = () => {
+    setActionType('buy');
+    setSourceCurrency('USD');
+    setTargetCurrency('VND');
+    setRateMode('tiered');
+    setServiceFee(0);
+    setGstAmount(0);
+    setOtherCharges(0);
+    setNoteBatches([
+      { id: 1, denom: 100, count: 5, rate: 25680 },
+      { id: 2, denom: 50, count: 2, rate: 25550 },
+      { id: 3, denom: 20, count: 4, rate: 24900 },
+      { id: 4, denom: 10, count: 2, rate: 24800 },
+    ]);
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans antialiased selection:bg-teal-100 selection:text-teal-900 pb-16">
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased selection:bg-emerald-500 selection:text-white pb-16">
       
-      {/* Top Header Bar */}
-      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200 shadow-2xs">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+      {/* ================= TOP HEADER ================= */}
+      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-xs">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-teal-600 to-emerald-500 text-white flex items-center justify-center shadow-xs font-bold text-lg">
-              {getCurrencySymbol(targetCurrency) || '₫'}
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-sm shadow-emerald-500/20">
+              <Banknote className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="font-extrabold text-slate-900 text-lg tracking-tight">My Travel Forex Calculator</h1>
-                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-teal-50 text-teal-800 border border-teal-200">
+                <h1 className="text-xl font-bold tracking-tight text-slate-900">
+                  My Travel Forex Calculator
+                </h1>
+                <span className="text-[11px] font-semibold bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-200/60 uppercase tracking-wider">
                   Accurate Travel Forex
                 </span>
               </div>
-              <p className="text-xs text-slate-500">INR, USD & VND Live Forex Calculator</p>
+              <p className="text-xs text-slate-500 hidden sm:block">
+                INR, USD & VND Live Forex Calculator
+              </p>
             </div>
           </div>
 
-          {/* Quick preset buttons */}
-          <div className="flex items-center gap-2">
+          {/* Quick Scenario Preset Chips & Refresh */}
+          <div className="flex items-center gap-2 flex-wrap">
             <button
-              onClick={() => applyPreset('INR_TO_USD')}
-              className="px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer"
+              onClick={handlePresetIndiaToUSD}
+              className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors border border-slate-200"
             >
               Preset: INR➔USD
             </button>
             <button
-              onClick={() => applyPreset('USD_TO_VND_MULTI_RATES')}
-              className="px-2.5 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition cursor-pointer"
+              onClick={handlePresetVietnamUSDToVND}
+              className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition-colors border border-emerald-200"
             >
               Preset: Mixed USD Rates
             </button>
             <button
               onClick={fetchLiveRates}
               disabled={isLoadingRates}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg transition cursor-pointer shadow-2xs"
+              title="Refresh live interbank rates"
+              className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors border border-slate-200 flex items-center gap-1 text-xs"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingRates ? 'animate-spin text-teal-600' : ''}`} />
-              <span className="hidden sm:inline">Refresh</span>
+              <RotateCw className={`w-3.5 h-3.5 ${isLoadingRates ? 'animate-spin text-emerald-600' : ''}`} />
+              <span className="hidden md:inline">Refresh</span>
             </button>
           </div>
         </div>
 
-        {/* Live Rates Ticker */}
-        <div className="bg-slate-100/90 border-t border-slate-200 px-4 py-1.5">
-          <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-2 text-xs">
-            <div className="flex items-center gap-1.5 text-slate-500">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+        {/* ================= LIVE TICKER & REVERSE BAR ================= */}
+        <div className="bg-slate-100/90 border-t border-slate-200/60 px-4 sm:px-6 py-2 text-xs">
+          <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-slate-600">
+              <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
               <span className="font-semibold text-slate-700">Market Reference:</span>
-              <span className="text-slate-400">({lastUpdated || 'Loading...'})</span>
+              <span className="text-slate-500">
+                {lastUpdated ? `(${lastUpdated})` : 'Loading...'}
+              </span>
+              {rateError && (
+                <span className="text-amber-600 font-medium">⚠️ {rateError}</span>
+              )}
             </div>
 
-            <div className="flex items-center gap-3 overflow-x-auto py-0.5">
-              {/* USD <-> INR */}
-              <div className="flex items-center gap-1 bg-white px-2.5 py-1 rounded-md border border-slate-200 text-xs shadow-2xs">
-                <span className="font-semibold text-slate-700">
-                  {reverseTicker ? '1 INR' : '1 USD'}
-                </span>
-                <span className="text-slate-400">=</span>
-                <span className="font-mono font-bold text-teal-700">
-                  {reverseTicker ? (1 / liveRates.USD_INR).toFixed(4) + ' USD' : '₹' + formatNum(liveRates.USD_INR, 2)}
-                </span>
-              </div>
+            <div className="flex items-center gap-3 sm:gap-5 font-mono text-slate-700 flex-wrap">
+              {!invertReference ? (
+                <>
+                  <div className="bg-white px-2.5 py-1 rounded-md border border-slate-200/80 shadow-2xs">
+                    1 USD = <span className="font-bold text-emerald-700">₹{rates.INR.toFixed(2)}</span>
+                  </div>
+                  <div className="bg-white px-2.5 py-1 rounded-md border border-slate-200/80 shadow-2xs">
+                    1 USD = <span className="font-bold text-emerald-700">{rates.VND.toLocaleString()} ₫</span>
+                  </div>
+                  <div className="bg-white px-2.5 py-1 rounded-md border border-slate-200/80 shadow-2xs">
+                    1 INR = <span className="font-bold text-indigo-700">{(rates.VND / rates.INR).toFixed(1)} ₫</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="bg-white px-2.5 py-1 rounded-md border border-slate-200/80 shadow-2xs">
+                    ₹100 = <span className="font-bold text-emerald-700">${(100 / rates.INR).toFixed(2)}</span>
+                  </div>
+                  <div className="bg-white px-2.5 py-1 rounded-md border border-slate-200/80 shadow-2xs">
+                    100k ₫ = <span className="font-bold text-emerald-700">${(100000 / rates.VND).toFixed(2)}</span>
+                  </div>
+                  <div className="bg-white px-2.5 py-1 rounded-md border border-slate-200/80 shadow-2xs">
+                    100k ₫ = <span className="font-bold text-indigo-700">₹{((100000 / rates.VND) * rates.INR).toFixed(1)}</span>
+                  </div>
+                </>
+              )}
 
-              {/* USD <-> VND */}
-              <div className="flex items-center gap-1 bg-white px-2.5 py-1 rounded-md border border-slate-200 text-xs shadow-2xs">
-                <span className="font-semibold text-slate-700">
-                  {reverseTicker ? '100k VND' : '1 USD'}
-                </span>
-                <span className="text-slate-400">=</span>
-                <span className="font-mono font-bold text-emerald-700">
-                  {reverseTicker ? '$' + ((100000 / liveRates.USD_VND).toFixed(2)) : formatNum(liveRates.USD_VND) + ' ₫'}
-                </span>
-              </div>
-
-              {/* INR <-> VND */}
-              <div className="flex items-center gap-1 bg-white px-2.5 py-1 rounded-md border border-slate-200 text-xs shadow-2xs">
-                <span className="font-semibold text-slate-700">
-                  {reverseTicker ? '100k VND' : '1 INR'}
-                </span>
-                <span className="text-slate-400">=</span>
-                <span className="font-mono font-bold text-indigo-700">
-                  {reverseTicker ? '₹' + ((100000 / liveRates.INR_VND).toFixed(1)) : formatNum(liveRates.INR_VND, 1) + ' ₫'}
-                </span>
-              </div>
-
-              {/* Invert Button */}
               <button
-                onClick={() => setReverseTicker(!reverseTicker)}
-                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-md transition cursor-pointer"
-                title="Reverse currency display"
+                onClick={() => setInvertReference(!invertReference)}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-white hover:bg-slate-200 text-slate-700 border border-slate-300 transition-colors cursor-pointer"
               >
-                <ArrowRightLeft className="w-3 h-3 text-slate-500" />
-                <span>{reverseTicker ? 'Standard Rates' : 'Invert Rates'}</span>
+                <ArrowLeftRight className="w-3 h-3 text-emerald-600" />
+                <span>Invert Rates</span>
               </button>
             </div>
           </div>
         </div>
       </header>
 
-      {/* Main Content Area */}
-      <main className="max-w-6xl mx-auto px-4 pt-6 space-y-6">
+      {/* ================= MAIN CONTAINER ================= */}
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 mt-6 space-y-6">
 
-        {/* Forex Transaction Configuration Card */}
-        <div className="bg-white rounded-2xl border border-slate-200/90 p-5 sm:p-6 shadow-xs">
+        {/* ================= STEP 1: TRANSACTION CONFIGURATION CARD ================= */}
+        <section className="bg-white rounded-2xl border border-slate-200/90 p-5 sm:p-6 shadow-xs">
           
-          {/* Action & Currencies Row */}
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center pb-6 border-b border-slate-100">
-            {/* Buy / Sell Toggle */}
-            <div className="md:col-span-4">
-              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-2">
-                Transaction Type
-              </label>
-              <div className="grid grid-cols-2 p-1 bg-slate-100 rounded-xl border border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => setTradeAction('BUY')}
-                  className={`py-2 px-3 rounded-lg text-xs font-bold transition cursor-pointer ${
-                    tradeAction === 'BUY'
-                      ? 'bg-emerald-600 text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Buy Currency
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTradeAction('SELL')}
-                  className={`py-2 px-3 rounded-lg text-xs font-bold transition cursor-pointer ${
-                    tradeAction === 'SELL'
-                      ? 'bg-indigo-600 text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Sell / Buyback
-                </button>
-              </div>
+          {/* Action Selector: Buy vs Sell */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-slate-100">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <span>Select Currency & Transaction Type</span>
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Configure whether you are buying foreign cash or selling/buyback unused notes.
+              </p>
             </div>
 
+            {/* Buy / Sell Toggle Pill */}
+            <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200/80">
+              <button
+                type="button"
+                onClick={() => setActionType('buy')}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
+                  actionType === 'buy'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <TrendingUp className="w-3.5 h-3.5" />
+                <span>Buy Currency</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActionType('sell')}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
+                  actionType === 'sell'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <TrendingDown className="w-3.5 h-3.5" />
+                <span>Sell / Buyback</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Currencies & Mode Setup */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-5 mt-5">
+            
             {/* Currency Selectors */}
-            <div className="md:col-span-8 flex flex-col sm:flex-row items-center gap-3">
-              {/* Source Currency */}
-              <div className="w-full sm:flex-1">
-                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1.5">
-                  {tradeAction === 'BUY' ? 'You Give (Paying In)' : 'You Surrender (Leftover)'}
+            <div className="md:col-span-7 bg-slate-50/70 p-4 rounded-xl border border-slate-200/80 flex flex-col sm:flex-row items-center gap-3">
+              
+              {/* You Pay / Give */}
+              <div className="w-full">
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                  {actionType === 'buy' ? 'You Pay With' : 'You Sell (Cash Notes)'}
                 </label>
                 <select
                   value={sourceCurrency}
-                  onChange={(e) => handleSourceSelect(e.target.value)}
-                  className="w-full py-2.5 px-3 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer"
+                  onChange={(e) => handleSourceChange(e.target.value)}
+                  className="w-full bg-white font-semibold text-slate-800 rounded-lg border border-slate-300 py-2.5 px-3 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-hidden transition-all text-sm shadow-2xs"
                 >
-                  <option value="INR">INR (Indian Rupee - ₹)</option>
-                  <option value="USD">USD (US Dollar - $)</option>
-                  <option value="VND">VND (Vietnamese Dong - ₫)</option>
+                  {CURRENCIES.map(curr => (
+                    <option key={curr.code} value={curr.code}>
+                      {curr.flag} {curr.code} — {curr.name}
+                    </option>
+                  ))}
                 </select>
               </div>
 
               {/* Swap Button */}
-              <div className="pt-5 sm:pt-6">
-                <button
-                  type="button"
-                  onClick={handleSwapCurrencies}
-                  className="p-2.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 transition cursor-pointer"
-                  title="Swap Currencies"
-                >
-                  <ArrowRightLeft className="w-4 h-4" />
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={handleSwapCurrencies}
+                title="Swap Currencies"
+                className="mt-4 sm:mt-5 p-2.5 rounded-full bg-white hover:bg-slate-100 text-slate-600 hover:text-slate-900 border border-slate-300 shadow-2xs transition-colors shrink-0 cursor-pointer"
+              >
+                <ArrowLeftRight className="w-4 h-4 text-emerald-600" />
+              </button>
 
-              {/* Target Currency */}
-              <div className="w-full sm:flex-1">
-                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1.5">
-                  {tradeAction === 'BUY' ? 'You Receive (Target)' : 'You Receive Back'}
+              {/* You Receive / Get */}
+              <div className="w-full">
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                  {actionType === 'buy' ? 'You Receive (Target)' : 'You Receive (Cash Back)'}
                 </label>
                 <select
                   value={targetCurrency}
-                  onChange={(e) => handleTargetSelect(e.target.value)}
-                  className="w-full py-2.5 px-3 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer"
+                  onChange={(e) => handleTargetChange(e.target.value)}
+                  className="w-full bg-white font-semibold text-slate-800 rounded-lg border border-slate-300 py-2.5 px-3 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-hidden transition-all text-sm shadow-2xs"
                 >
-                  <option value="USD">USD (US Dollar - $)</option>
-                  <option value="VND">VND (Vietnamese Dong - ₫)</option>
-                  <option value="INR">INR (Indian Rupee - ₹)</option>
+                  {CURRENCIES.map(curr => (
+                    <option key={curr.code} value={curr.code}>
+                      {curr.flag} {curr.code} — {curr.name}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
+
+            {/* Rate Mode: Single Rate vs Different Rates for Notes */}
+            <div className="md:col-span-5 bg-slate-50/70 p-4 rounded-xl border border-slate-200/80 flex flex-col justify-between">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                  Exchange Rate Structure
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRateMode('single')}
+                    className={`py-2 px-3 rounded-lg text-xs font-medium border text-center transition-all ${
+                      rateMode === 'single'
+                        ? 'bg-white border-emerald-500 text-emerald-800 font-bold shadow-2xs ring-1 ring-emerald-500'
+                        : 'bg-white/60 border-slate-200 text-slate-600 hover:bg-white'
+                    }`}
+                  >
+                    Uniform Rate (Flat)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRateMode('tiered')}
+                    className={`py-2 px-3 rounded-lg text-xs font-medium border text-center transition-all ${
+                      rateMode === 'tiered'
+                        ? 'bg-white border-emerald-500 text-emerald-800 font-bold shadow-2xs ring-1 ring-emerald-500'
+                        : 'bg-white/60 border-slate-200 text-slate-600 hover:bg-white'
+                    }`}
+                  >
+                    Different Rates per Note
+                  </button>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-2">
+                {rateMode === 'single'
+                  ? 'Use when dealer gives one uniform quote for the entire amount.'
+                  : 'Allows adding custom rows for crisp vs folded notes or small vs large bills.'}
+              </p>
+            </div>
           </div>
 
-          {/* Rate Mode Toggle: Same Rate vs Different Rates for Different Notes */}
-          <div className="pt-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-              <div>
-                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
-                  Exchange Rate Mode
-                </label>
-                <p className="text-xs text-slate-500">
-                  Select single uniform rate or custom note rows with individual condition rates
-                </p>
-              </div>
+          {/* ================= MODE A: UNIFORM / SINGLE RATE INPUTS ================= */}
+          {rateMode === 'single' && (
+            <div className="mt-5 p-4 sm:p-5 rounded-xl bg-emerald-50/40 border border-emerald-100">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-900 mb-3 flex items-center gap-1.5">
+                <Calculator className="w-4 h-4 text-emerald-700" />
+                <span>Single Conversion Quote</span>
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Amount ({sourceCurrency})
+                  </label>
+                  <div className="relative rounded-lg shadow-2xs">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400 font-bold text-sm">
+                      {sourceSymbol}
+                    </span>
+                    <input
+                      type="number"
+                      value={singleAmount}
+                      onChange={(e) => setSingleAmount(Math.max(0, parseFloat(e.target.value) || 0))}
+                      className="w-full pl-8 pr-4 py-2.5 rounded-lg border border-slate-300 bg-white font-semibold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-hidden text-sm"
+                      placeholder="e.g. 50000"
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Total {sourceCurrency} tendered to exchange shop.
+                  </p>
+                </div>
 
-              <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => setRateMode('UNIFORM')}
-                  className={`py-1.5 px-4 rounded-lg text-xs font-bold transition cursor-pointer ${
-                    rateMode === 'UNIFORM'
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Single / Uniform Rate
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRateMode('TIERED')}
-                  className={`py-1.5 px-4 rounded-lg text-xs font-bold transition cursor-pointer ${
-                    rateMode === 'TIERED'
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Different Rates per Note
-                </button>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Quoted Exchange Rate
+                  </label>
+                  <div className="relative rounded-lg shadow-2xs">
+                    <input
+                      type="number"
+                      step="0.0001"
+                      value={singleRate}
+                      onChange={(e) => setSingleRate(Math.max(0, parseFloat(e.target.value) || 0))}
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-300 bg-white font-semibold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-hidden text-sm"
+                      placeholder="e.g. 87.50 or 25400"
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1 flex items-center justify-between">
+                    <span>Rate given by forex shop.</span>
+                    <span className="text-slate-400">Interbank: ~{liveInterbankRate > 0 ? liveInterbankRate.toFixed(4) : '--'}</span>
+                  </p>
+                </div>
               </div>
             </div>
+          )}
 
-            {/* UNIFORM RATE INPUTS */}
-            {rateMode === 'UNIFORM' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50/70 p-4 rounded-xl border border-slate-200">
+          {/* ================= MODE B: TIERED / NOTE BREAKDOWN WITH CUSTOM ROWS ================= */}
+          {rateMode === 'tiered' && (
+            <div className="mt-5 p-4 sm:p-5 rounded-xl bg-slate-50 border border-slate-200">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
                 <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1">
-                    {tradeAction === 'BUY' 
-                      ? (sourceCurrency === 'USD' && targetCurrency === 'VND' 
-                          ? `Amount of USD Tendered ($)` 
-                          : `Desired Amount to Buy (${targetCurrency})`)
-                      : `Amount You Are Exchanging (${sourceCurrency})`
-                    }
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">
-                      {tradeAction === 'BUY' 
-                        ? (sourceCurrency === 'USD' && targetCurrency === 'VND' ? '$' : getCurrencySymbol(targetCurrency)) 
-                        : getCurrencySymbol(sourceCurrency)}
-                    </span>
-                    <input
-                      type="number"
-                      min="0"
-                      value={targetAmountDesired}
-                      onChange={(e) => setTargetAmountDesired(parseFloat(e.target.value) || 0)}
-                      className="w-full pl-8 pr-4 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-900 font-bold text-base focus:outline-none focus:ring-2 focus:ring-teal-500"
-                      placeholder="e.g. 1000"
-                    />
-                  </div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                    <Banknote className="w-4 h-4 text-emerald-600" />
+                    <span>Denomination Note Breakdown ({notesCurrency} Notes)</span>
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Add custom note batches. You can add the same denomination multiple times with different rates.
+                  </p>
                 </div>
-
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="text-xs font-bold text-slate-700">
-                      Dealer Quoted Rate
-                    </label>
-                    <span className="text-[11px] text-slate-500 font-mono">
-                      Market Ref: {marketBenchmarkRate.toFixed(2)}
-                    </span>
-                  </div>
-                  <div className="relative">
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={uniformRate}
-                      onChange={(e) => setUniformRate(parseFloat(e.target.value) || 0)}
-                      className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-900 font-bold text-base focus:outline-none focus:ring-2 focus:ring-teal-500"
-                      placeholder="Rate quoted by dealer"
-                    />
-                  </div>
-                  <span className="text-[11px] text-slate-500 mt-1 block">
-                    Format: {rateUnitLabel}
-                  </span>
-                </div>
+                <button
+                  type="button"
+                  onClick={handleAddBatch}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-2xs transition-colors self-start sm:self-auto cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Note Batch</span>
+                </button>
               </div>
-            )}
 
-            {/* DYNAMIC CUSTOM NOTE BATCHES WITH ADD ROW SUPPORT */}
-            {rateMode === 'TIERED' && (
-              <div className="bg-slate-50/80 p-3 sm:p-4 rounded-xl border border-slate-200 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200">
-                  <div className="flex items-center gap-2">
-                    <Coins className="w-4 h-4 text-teal-600 shrink-0" />
-                    <span className="text-xs sm:text-sm font-bold text-slate-800">
-                      Denomination Note Breakdown
-                    </span>
-                  </div>
-                  
-                  {/* Currency selector & Add Row button */}
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs text-slate-500 font-medium">Notes Currency:</span>
-                      <select
-                        value={notesDenomCurrency}
-                        onChange={(e) => handleNotesCurrencyChange(e.target.value)}
-                        className="py-1 px-2.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:outline-none cursor-pointer"
-                      >
-                        <option value="USD">USD Notes ($)</option>
-                        <option value="INR">INR Notes (₹)</option>
-                        <option value="VND">VND Notes (₫)</option>
-                      </select>
-                    </div>
+              {/* Responsive Scrollable Table Container */}
+              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
+                <table className="w-full text-left text-xs text-slate-700 border-collapse min-w-[560px]">
+                  <thead className="bg-slate-100/90 text-slate-600 uppercase text-[11px] font-semibold border-b border-slate-200">
+                    <tr>
+                      <th className="py-2.5 px-3">Denomination</th>
+                      <th className="py-2.5 px-3 w-32">No. of Notes</th>
+                      <th className="py-2.5 px-3">Total Value</th>
+                      <th className="py-2.5 px-3">{rateUnitLabel}</th>
+                      <th className="py-2.5 px-3">Total Amount</th>
+                      <th className="py-2.5 px-2 text-center w-10">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {noteBatches.map((batch) => {
+                      const count = Number(batch.count) || 0;
+                      const denom = Number(batch.denom) || 0;
+                      const rate = Number(batch.rate) || 0;
+                      const faceVal = count * denom;
+                      const yieldAmount = faceVal * rate;
+                      const standardList = STANDARD_DENOMINATIONS[notesCurrency] || [];
 
-                    <button
-                      type="button"
-                      onClick={handleAddNoteBatch}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition cursor-pointer shadow-2xs"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Add Note Batch</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto -mx-1 sm:mx-0">
-                  <table className="w-full min-w-[560px] text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-slate-500 font-bold">
-                        <th className="py-2.5 px-2 w-36">Denomination</th>
-                        <th className="py-2.5 px-2 w-32">No. of Notes</th>
-                        <th className="py-2.5 px-2 w-28">Total Value</th>
-                        <th className="py-2.5 px-2">Rate ({rateUnitLabel})</th>
-                        <th className="py-2.5 px-2 text-right w-36">Total Amount ({targetCurrency})</th>
-                        <th className="py-2.5 px-2 text-center w-12">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200">
-                      {noteBatches.map((batch) => {
-                        const noteTotal = (batch.denom || 0) * (batch.count || 0);
-                        const yieldTotal = noteTotal * (batch.rate || 0);
-                        const standardList = STANDARD_DENOMS[notesDenomCurrency] || [100, 50, 20, 10, 5, 1];
-
-                        return (
-                          <tr key={batch.id} className="hover:bg-white/80 transition-colors">
-                            {/* Denomination Selector / Custom Input */}
-                            <td className="py-2.5 px-2">
+                      return (
+                        <tr key={batch.id} className="hover:bg-slate-50/80 transition-colors">
+                          {/* Denomination Selector / Custom Value */}
+                          <td className="py-2.5 px-3 font-semibold text-slate-900">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-slate-400 font-bold">{notesSymbol}</span>
                               <select
                                 value={batch.denom}
-                                onChange={(e) => handleBatchDenomChange(batch.id, e.target.value)}
-                                className="w-full py-1.5 px-2 bg-white border border-slate-300 rounded-lg font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-teal-500 text-xs sm:text-sm cursor-pointer"
+                                onChange={(e) => handleBatchChange(batch.id, 'denom', Number(e.target.value))}
+                                className="bg-slate-50 border border-slate-300 rounded-md px-2 py-1 text-xs font-semibold text-slate-800 focus:ring-1 focus:ring-emerald-500 outline-hidden"
                               >
                                 {standardList.map(d => (
                                   <option key={d} value={d}>
-                                    {getCurrencySymbol(notesDenomCurrency)} {formatNum(d)} note
+                                    {d.toLocaleString()}
                                   </option>
                                 ))}
                                 {!standardList.includes(batch.denom) && (
-                                  <option value={batch.denom}>
-                                    {getCurrencySymbol(notesDenomCurrency)} {formatNum(batch.denom)} (custom)
-                                  </option>
+                                  <option value={batch.denom}>{batch.denom.toLocaleString()} (Custom)</option>
                                 )}
                               </select>
-                            </td>
+                            </div>
+                          </td>
 
-                            {/* Note count stepper with touch-friendly targets */}
-                            <td className="py-2.5 px-2">
-                              <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => handleBatchCountChange(batch.id, Math.max(0, (batch.count || 0) - 1))}
-                                  className="w-7 h-7 sm:w-6 sm:h-6 bg-slate-200 active:bg-slate-300 hover:bg-slate-300 rounded text-slate-800 font-bold flex items-center justify-center cursor-pointer select-none text-sm"
-                                  aria-label="Decrease note count"
-                                >
-                                  -
-                                </button>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  value={batch.count}
-                                  onChange={(e) => handleBatchCountChange(batch.id, e.target.value)}
-                                  className="w-12 text-center py-1 bg-white border border-slate-300 rounded font-bold text-slate-900 focus:outline-none text-xs sm:text-sm"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => handleBatchCountChange(batch.id, (batch.count || 0) + 1)}
-                                  className="w-7 h-7 sm:w-6 sm:h-6 bg-slate-200 active:bg-slate-300 hover:bg-slate-300 rounded text-slate-800 font-bold flex items-center justify-center cursor-pointer select-none text-sm"
-                                  aria-label="Increase note count"
-                                >
-                                  +
-                                </button>
-                              </div>
-                            </td>
-
-                            {/* Total face value */}
-                            <td className="py-2.5 px-2 font-mono font-semibold text-slate-700 whitespace-nowrap">
-                              {getCurrencySymbol(notesDenomCurrency)} {formatNum(noteTotal)}
-                            </td>
-
-                            {/* Quoted rate for this specific note */}
-                            <td className="py-2.5 px-2">
-                              <input
-                                type="number"
-                                step="any"
-                                value={batch.rate}
-                                onChange={(e) => handleBatchRateChange(batch.id, e.target.value)}
-                                className="w-full py-1.5 px-2.5 bg-white border border-slate-300 rounded font-mono text-slate-900 focus:outline-none focus:ring-1 focus:ring-teal-500 text-xs sm:text-sm"
-                              />
-                            </td>
-
-                            {/* Total yield for this denomination */}
-                            <td className="py-2.5 px-2 text-right font-mono font-bold text-teal-800 whitespace-nowrap">
-                              {getCurrencySymbol(targetCurrency)} {formatNum(yieldTotal)}
-                            </td>
-
-                            {/* Delete row action */}
-                            <td className="py-2.5 px-2 text-center">
+                          {/* Number of Notes with Stepper */}
+                          <td className="py-2.5 px-3">
+                            <div className="flex items-center gap-1">
                               <button
                                 type="button"
-                                onClick={() => handleRemoveNoteBatch(batch.id)}
-                                disabled={noteBatches.length <= 1}
-                                className={`p-1.5 rounded-md transition cursor-pointer ${
-                                  noteBatches.length <= 1 
-                                    ? 'text-slate-300 cursor-not-allowed' 
-                                    : 'text-rose-500 hover:bg-rose-50 hover:text-rose-700'
-                                }`}
-                                title={noteBatches.length <= 1 ? "At least one row required" : "Delete note batch"}
+                                onClick={() => handleBatchChange(batch.id, 'count', Math.max(0, count - 1))}
+                                className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center font-bold text-xs select-none"
                               >
-                                <Trash2 className="w-4 h-4" />
+                                -
                               </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
+                              <input
+                                type="number"
+                                min="0"
+                                value={batch.count}
+                                onChange={(e) => handleBatchChange(batch.id, 'count', Math.max(0, parseInt(e.target.value) || 0))}
+                                className="w-14 text-center py-1 rounded border border-slate-300 bg-white font-semibold text-slate-900 text-xs focus:ring-1 focus:ring-emerald-500 outline-hidden"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleBatchChange(batch.id, 'count', count + 1)}
+                                className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center font-bold text-xs select-none"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </td>
 
-                    {/* TOTAL FOOTER ROW IN DENOMINATION BREAKDOWN TABLE */}
-                    <tfoot className="border-t-2 border-slate-300 bg-slate-100/90 font-bold text-slate-900">
-                      <tr>
-                        <td className="py-3 px-2 text-xs sm:text-sm uppercase tracking-wider text-slate-700">
-                          Total Summary:
-                        </td>
-                        <td className="py-3 px-2 font-mono text-xs sm:text-sm text-slate-800">
-                          {noteBatches.reduce((acc, b) => acc + (parseInt(b.count, 10) || 0), 0)} notes
-                        </td>
-                        <td className="py-3 px-2 font-mono text-xs sm:text-sm text-slate-900 whitespace-nowrap">
-                          {getCurrencySymbol(notesDenomCurrency)} {formatNum(noteBatches.reduce((acc, b) => acc + ((b.denom || 0) * (parseInt(b.count, 10) || 0)), 0))}
-                        </td>
-                        <td className="py-3 px-2 text-[11px] sm:text-xs text-slate-500 font-normal">
-                          Weighted Avg: <span className="font-mono font-bold text-slate-700">
-                            {calculations.weightedEffectiveRate > 0 ? (
-                              (sourceCurrency === 'INR' && targetCurrency === 'USD')
-                                ? calculations.weightedEffectiveRate.toFixed(2)
-                                : (1 / calculations.weightedEffectiveRate).toFixed(2)
-                            ) : '—'}
-                          </span>
-                        </td>
-                        <td className="py-3 px-2 text-right font-mono font-extrabold text-sm sm:text-base text-emerald-700 whitespace-nowrap">
-                          {getCurrencySymbol(targetCurrency)} {formatNum(calculations.netTargetUnitsReceived)}
-                        </td>
-                        <td className="py-3 px-2"></td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
+                          {/* Total Value in Notes Currency */}
+                          <td className="py-2.5 px-3 font-mono font-medium text-slate-800">
+                            {notesSymbol}{faceVal.toLocaleString()}
+                          </td>
+
+                          {/* Rate for this batch */}
+                          <td className="py-2.5 px-3">
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={batch.rate}
+                              onChange={(e) => handleBatchChange(batch.id, 'rate', Math.max(0, parseFloat(e.target.value) || 0))}
+                              className="w-28 px-2 py-1 rounded border border-slate-300 bg-white font-semibold text-slate-900 text-xs focus:ring-1 focus:ring-emerald-500 outline-hidden"
+                              placeholder="Rate"
+                            />
+                          </td>
+
+                          {/* Converted Amount */}
+                          <td className="py-2.5 px-3 font-mono font-semibold text-emerald-700">
+                            {targetSymbol}
+                            {yieldAmount >= 1000 ? Math.round(yieldAmount).toLocaleString() : yieldAmount.toFixed(2)}
+                          </td>
+
+                          {/* Delete Row Action */}
+                          <td className="py-2.5 px-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveBatch(batch.id)}
+                              disabled={noteBatches.length <= 1}
+                              title={noteBatches.length <= 1 ? "At least one row required" : "Remove this batch"}
+                              className={`p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors ${
+                                noteBatches.length <= 1 ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'
+                              }`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+
+                  {/* Foot Totals Row */}
+                  <tfoot className="bg-slate-100 font-bold border-t-2 border-slate-300 text-slate-900">
+                    <tr>
+                      <td className="py-2.5 px-3 text-slate-700 uppercase tracking-wider text-[11px]">
+                        Total Summary:
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-800">
+                        {tieredTotals.totalNotesCount} notes
+                      </td>
+                      <td className="py-2.5 px-3 font-mono text-slate-900">
+                        {notesSymbol}{tieredTotals.totalFaceValue.toLocaleString()}
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-700 text-[11px] font-mono">
+                        Avg: {tieredTotals.weightedAvgRate.toFixed(2)}
+                      </td>
+                      <td className="py-2.5 px-3 font-mono text-emerald-800 text-sm">
+                        {targetSymbol}
+                        {tieredTotals.totalConvertedYield >= 1000
+                          ? Math.round(tieredTotals.totalConvertedYield).toLocaleString()
+                          : tieredTotals.totalConvertedYield.toFixed(2)}
+                      </td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
               </div>
-            )}
+            </div>
+          )}
 
-            {/* Service Fees, EDITABLE GST & Other Charges */}
-            <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* ================= TAXES & SERVICE FEES (ALL MODES) ================= */}
+          <div className="mt-5 pt-4 border-t border-slate-100">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Receipt className="w-4 h-4 text-emerald-600" />
+                <span>Service Fee, GST & Extra Charges</span>
+              </span>
+              <span className="text-[11px] text-slate-400 font-normal">
+                Amounts in {sourceCurrency}
+              </span>
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               
-              {/* Service Fee */}
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  Service / Handling Fee ({sourceCurrency})
+              {/* Flat Service Fee */}
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200/80">
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                  Service / Handling Fee
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">
-                    {getCurrencySymbol(sourceCurrency)}
+                  <span className="absolute inset-y-0 left-0 pl-2.5 flex items-center text-slate-400 text-xs font-bold">
+                    {sourceSymbol}
                   </span>
                   <input
                     type="number"
-                    min="0"
                     value={serviceFee}
                     onChange={(e) => setServiceFee(Math.max(0, parseFloat(e.target.value) || 0))}
-                    className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-900 font-medium text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    className="w-full pl-6 pr-3 py-1.5 text-xs font-semibold rounded border border-slate-300 bg-white focus:ring-1 focus:ring-emerald-500 outline-hidden"
                     placeholder="0"
                   />
                 </div>
               </div>
 
-              {/* Other Charges */}
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  Other Charges / Delivery ({sourceCurrency})
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">
-                    {getCurrencySymbol(sourceCurrency)}
-                  </span>
-                  <input
-                    type="number"
-                    min="0"
-                    value={otherCharges}
-                    onChange={(e) => setOtherCharges(Math.max(0, parseFloat(e.target.value) || 0))}
-                    className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-900 font-medium text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-                    placeholder="0"
-                  />
-                </div>
-              </div>
-
-              {/* GST Editable Field with Auto/Manual Controls */}
-              <div>
+              {/* Editable GST with 0.18% auto button */}
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200/80">
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-bold text-slate-700 block">
-                    GST ({sourceCurrency})
+                  <label className="text-[11px] font-semibold text-slate-600">
+                    GST (Editable)
                   </label>
                   <button
                     type="button"
-                    onClick={() => {
-                      const autoVal = Number((calculations.baseConversionCostInSource * 0.0018).toFixed(2));
-                      setGstAmount(autoVal);
-                      setIsGstAuto(true);
-                    }}
-                    className={`text-[10px] px-2 py-0.5 rounded font-semibold transition cursor-pointer ${
-                      isGstAuto ? 'bg-teal-100 text-teal-800' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-                    }`}
-                    title="Click to reset to standard 0.18% of Base Amount"
+                    onClick={() => setGstAmount(calculation.autoGstValue)}
+                    className="text-[10px] text-emerald-700 font-semibold hover:underline bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 cursor-pointer"
+                    title="Click to calculate Base Amount × 0.18%"
                   >
-                    {isGstAuto ? 'Auto (0.18%)' : 'Set 0.18%'}
+                    Auto (0.18%)
                   </button>
                 </div>
                 <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">
-                    {getCurrencySymbol(sourceCurrency)}
+                  <span className="absolute inset-y-0 left-0 pl-2.5 flex items-center text-slate-400 text-xs font-bold">
+                    {sourceSymbol}
                   </span>
                   <input
                     type="number"
                     step="0.01"
-                    min="0"
                     value={gstAmount}
-                    onChange={(e) => {
-                      setIsGstAuto(false);
-                      setGstAmount(parseFloat(e.target.value) || 0);
-                    }}
-                    className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-900 font-bold text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-                    placeholder="Enter GST amount"
+                    onChange={(e) => setGstAmount(Math.max(0, parseFloat(e.target.value) || 0))}
+                    className="w-full pl-6 pr-3 py-1.5 text-xs font-semibold rounded border border-slate-300 bg-white focus:ring-1 focus:ring-emerald-500 outline-hidden"
+                    placeholder="0"
                   />
                 </div>
-                <span className="text-[10px] text-slate-500 block leading-tight mt-1">
-                  Auto Calc: {formatNum(calculations.baseConversionCostInSource, 2)} × 0.18% = {getCurrencySymbol(sourceCurrency)}{(calculations.baseConversionCostInSource * 0.0018).toFixed(2)}
-                </span>
+                <div className="text-[10px] text-slate-500 mt-1 flex justify-between">
+                  <span>Base × 0.18%:</span>
+                  <span className="font-mono font-medium text-slate-700">
+                    {sourceSymbol}{calculation.autoGstValue.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Other Charges */}
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200/80">
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                  Other / Doorstep Charges
+                </label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-2.5 flex items-center text-slate-400 text-xs font-bold">
+                    {sourceSymbol}
+                  </span>
+                  <input
+                    type="number"
+                    value={otherCharges}
+                    onChange={(e) => setOtherCharges(Math.max(0, parseFloat(e.target.value) || 0))}
+                    className="w-full pl-6 pr-3 py-1.5 text-xs font-semibold rounded border border-slate-300 bg-white focus:ring-1 focus:ring-emerald-500 outline-hidden"
+                    placeholder="0"
+                  />
+                </div>
               </div>
             </div>
-
           </div>
-        </div>
+        </section>
 
-        {/* ================= SUMMARY & ANALYSIS DASHBOARD ================= */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* ================= SUMMARY & ANALYSIS (STACKED VERTICALLY: FULL WIDTH) ================= */}
+        <div className="space-y-6">
           
-          {/* Main Financial Summary */}
-          <div className="lg:col-span-7 space-y-4">
+          {/* 1. Main Financial Summary (Full Width First) */}
+          <div className="w-full space-y-4">
             <div className="bg-white rounded-2xl border border-slate-200/90 p-5 sm:p-6 shadow-xs">
               <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100">
-                <div className="flex items-center gap-2">
-                  <Receipt className="w-5 h-5 text-teal-600" />
-                  <h2 className="text-base font-extrabold text-slate-900">Exchange Summary</h2>
-                </div>
-                <span className="text-xs uppercase font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700">
-                  {tradeAction === 'BUY' ? 'Forex Purchase' : 'Forex Buyback / Sale'}
+                <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <Receipt className="w-5 h-5 text-emerald-600" />
+                  <span>Exchange Summary</span>
+                </h2>
+                <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700 uppercase">
+                  {actionType === 'buy' ? 'Forex Purchase' : 'Currency Buyback'}
                 </span>
               </div>
 
-              {/* Itemized Breakdown Table */}
-              <div className="space-y-3 text-xs sm:text-sm pt-1">
+              {/* Detailed Cost Breakdown First */}
+              <div className="space-y-2.5 text-xs sm:text-sm">
                 
-                {/* Fixed Base Conversion display */}
-                <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl space-y-1">
-                  <div className="flex justify-between items-center">
-                    <span className="font-semibold text-slate-700">
-                      {tradeAction === 'BUY' ? 'Base Exchange Conversion:' : 'Gross Dealer Converted Yield:'}
-                    </span>
-                    <span className="font-mono font-extrabold text-slate-950 text-sm sm:text-base">
-                      {tradeAction === 'BUY' 
-                        ? `${formatNum(calculations.baseConversionCostInSource, 2)} ${sourceCurrency}`
-                        : `${formatNum(calculations.netTargetUnitsReceived, 2)} ${targetCurrency}`}
-                    </span>
+                {/* Base Conversion */}
+                <div className="flex items-center justify-between py-1.5 border-b border-slate-100">
+                  <div className="text-slate-600">
+                    <span className="font-semibold text-slate-800">Base Exchange Conversion:</span>
+                    <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                      Converts: {sourceSymbol}{calculation.baseSourcePaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {sourceCurrency} ➔ {targetSymbol}{calculation.baseTargetReceived >= 1000 ? Math.round(calculation.baseTargetReceived).toLocaleString() : calculation.baseTargetReceived.toFixed(2)} {targetCurrency}
+                    </div>
                   </div>
-                  <div className="text-[11px] text-slate-500 font-mono">
-                    Converts: {formatNum(calculations.baseConversionCostInSource, 2)} {sourceCurrency} ➔ {formatNum(calculations.netTargetUnitsReceived, 2)} {targetCurrency}
-                  </div>
+                  <span className="font-mono font-bold text-slate-900 text-sm sm:text-base">
+                    {sourceSymbol}{calculation.baseSourcePaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {sourceCurrency}
+                  </span>
                 </div>
 
-                <div className="flex justify-between text-slate-600 px-1">
+                {/* Service Fee */}
+                <div className="flex items-center justify-between py-1 text-slate-600">
                   <span>Service & Handling Fee:</span>
-                  <span className="font-mono font-semibold text-slate-900">
-                    {tradeAction === 'BUY' ? '+ ' : '- '}
-                    {formatNum(serviceFee, 2)} {sourceCurrency}
+                  <span className="font-mono font-medium text-slate-800">
+                    + {sourceSymbol}{(Number(serviceFee) || 0).toFixed(2)} {sourceCurrency}
                   </span>
                 </div>
 
-                <div className="flex justify-between text-slate-600 px-1">
-                  <div className="flex items-center gap-1.5">
+                {/* GST */}
+                <div className="flex items-center justify-between py-1 text-slate-600">
+                  <span className="flex items-center gap-1">
                     <span>GST (Editable):</span>
-                    <span className="text-[11px] text-slate-400">
-                      {isGstAuto ? '(Auto 0.18%)' : '(Manual Entry)'}
-                    </span>
-                  </div>
-                  <span className="font-mono font-semibold text-slate-900">
-                    {tradeAction === 'BUY' ? '+ ' : '- '}
-                    {formatNum(gstAmount, 2)} {sourceCurrency}
+                    <span className="text-[10px] text-slate-400">(Auto 0.18%)</span>
+                  </span>
+                  <span className="font-mono font-medium text-slate-800">
+                    + {sourceSymbol}{(Number(gstAmount) || 0).toFixed(2)} {sourceCurrency}
                   </span>
                 </div>
 
-                {otherCharges > 0 && (
-                  <div className="flex justify-between text-slate-600 px-1">
-                    <span>Other Charges / Misc:</span>
-                    <span className="font-mono font-semibold text-slate-900">
-                      {tradeAction === 'BUY' ? '+ ' : '- '}
-                      {formatNum(otherCharges, 2)} {sourceCurrency}
+                {/* Other Charges */}
+                {Number(otherCharges) > 0 && (
+                  <div className="flex items-center justify-between py-1 text-slate-600">
+                    <span>Other / Delivery Charges:</span>
+                    <span className="font-mono font-medium text-slate-800">
+                      + {sourceSymbol}{(Number(otherCharges) || 0).toFixed(2)} {sourceCurrency}
                     </span>
                   </div>
                 )}
 
-                <div className="pt-3 border-t border-slate-200 flex justify-between items-baseline font-bold text-slate-900 px-1">
+                {/* Total Out-of-Pocket / Net Line */}
+                <div className="flex items-center justify-between pt-2.5 border-t border-slate-200 text-slate-900 font-bold">
                   <span>
-                    {tradeAction === 'BUY' ? 'Final Net Out-of-Pocket:' : 'Final Net Payout Received in Hand:'}
+                    {actionType === 'buy' ? 'Final Net Out-of-Pocket:' : 'Final Net Payout Received:'}
                   </span>
-                  <span className="font-mono text-lg text-emerald-800">
-                    {tradeAction === 'BUY' 
-                      ? `${getCurrencySymbol(sourceCurrency)} ${formatNum(calculations.totalMoneyToPay, 2)}`
-                      : `${getCurrencySymbol(targetCurrency)} ${formatNum(calculations.netCashReceivedInHand, 2)}`}
+                  <span className="font-mono text-emerald-800 text-base sm:text-lg">
+                    {sourceSymbol}
+                    {actionType === 'buy'
+                      ? calculation.totalMoneyToPay.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                      : calculation.netInHand.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
               </div>
 
-              {/* Dynamic Metric Display Moved Below Final Net Out-of-Pocket */}
+              {/* Total Money To Pay & Money In Hand Cards (Positioned Directly Below Out-of-Pocket) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6 pt-5 border-t border-slate-100">
-                {tradeAction === 'BUY' ? (
-                  <>
-                    {/* BUY Mode: Total Money To Pay */}
-                    <div className="p-4 rounded-xl bg-slate-900 text-white shadow-xs">
-                      <span className="text-xs text-slate-300 font-semibold block mb-1">
-                        Total Money To Pay
-                      </span>
-                      <div className="font-mono font-black text-2xl sm:text-3xl text-emerald-400">
-                        {getCurrencySymbol(sourceCurrency)} {formatNum(calculations.totalMoneyToPay, 2)}
-                      </div>
-                      <span className="text-[11px] text-slate-300 mt-1 block">
-                        Base Conversion + GST + All Fees
-                      </span>
-                    </div>
+                {/* Total Money to Pay */}
+                <div className="bg-slate-900 text-white rounded-xl p-4 flex flex-col justify-between shadow-xs">
+                  <div>
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">
+                      {actionType === 'buy' ? 'Total Money To Pay' : 'Total Cash Handed Over'}
+                    </span>
+                    <span className="text-xl sm:text-2xl font-black font-mono tracking-tight text-white mt-1 block">
+                      {sourceSymbol}
+                      {calculation.totalMoneyToPay.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-400 mt-2 block">
+                    {actionType === 'buy'
+                      ? `Base Conversion + GST + Fees in ${sourceCurrency}`
+                      : `Total Face Value in ${sourceCurrency}`}
+                  </span>
+                </div>
 
-                    {/* BUY Mode: Total Currency Received in Hand */}
-                    <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 shadow-xs">
-                      <span className="text-xs text-emerald-800 font-semibold block mb-1">
-                        Total Money In Your Hand
-                      </span>
-                      <div className="font-mono font-black text-2xl sm:text-3xl text-emerald-950">
-                        {getCurrencySymbol(targetCurrency)} {formatNum(calculations.netTargetUnitsReceived, 2)}
-                      </div>
-                      <span className="text-[11px] text-emerald-700 mt-1 block font-medium">
-                        Net cash currency received
-                      </span>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    {/* SELL Mode: Net Cash You Receive in Hand */}
-                    <div className="p-4 rounded-xl bg-emerald-700 text-white shadow-xs">
-                      <span className="text-xs text-emerald-100 font-semibold block mb-1">
-                        Net Cash You Receive in Hand
-                      </span>
-                      <div className="font-mono font-black text-2xl sm:text-3xl text-emerald-200">
-                        {getCurrencySymbol(targetCurrency)} {formatNum(calculations.netCashReceivedInHand, 2)}
-                      </div>
-                      <span className="text-[11px] text-emerald-100 mt-1 block">
-                        Gross Yield minus Dealer Fees & GST
-                      </span>
-                    </div>
-
-                    {/* SELL Mode: Currency Surrendered */}
-                    <div className="p-4 rounded-xl bg-slate-100 border border-slate-200 shadow-xs">
-                      <span className="text-xs text-slate-600 font-semibold block mb-1">
-                        Total Currency Surrendered
-                      </span>
-                      <div className="font-mono font-black text-2xl sm:text-3xl text-slate-900">
-                        {getCurrencySymbol(sourceCurrency)} {formatNum(calculations.baseConversionCostInSource, 2)}
-                      </div>
-                      <span className="text-[11px] text-slate-500 mt-1 block font-medium">
-                        Leftover notes handed over
-                      </span>
-                    </div>
-                  </>
-                )}
+                {/* Total Money in Your Hand */}
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex flex-col justify-between shadow-xs">
+                  <div>
+                    <span className="text-[11px] font-semibold text-emerald-800 uppercase tracking-wider block">
+                      {actionType === 'buy' ? 'Total Money In Your Hand' : 'Net Cash You Receive in Hand'}
+                    </span>
+                    <span className="text-xl sm:text-2xl font-black font-mono tracking-tight text-emerald-900 mt-1 block">
+                      {targetSymbol}
+                      {calculation.netInHand >= 1000
+                        ? Math.round(calculation.netInHand).toLocaleString()
+                        : calculation.netInHand.toFixed(2)}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-emerald-700 mt-2 block">
+                    {actionType === 'buy'
+                      ? `Foreign Cash Received in ${targetCurrency}`
+                      : `Final Net Cash Payout after deductions`}
+                  </span>
+                </div>
               </div>
-
             </div>
           </div>
 
-          {/* DEALER MARKUP & LOSS ANALYSIS (PURE SPREAD ONLY) */}
-          <div className="lg:col-span-5 space-y-4">
+          {/* 2. DEALER MARKUP & LOSS ANALYSIS (Full Width Directly Below) */}
+          <div className="w-full space-y-4">
             <div className="bg-white rounded-2xl border border-slate-200/90 p-5 sm:p-6 shadow-xs space-y-4">
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                 <div className="flex items-center gap-2">
                   <TrendingDown className="w-5 h-5 text-amber-600" />
-                  <h3 className="font-bold text-slate-900 text-sm">Dealer Markup & Loss Analysis</h3>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Dealer Markup & Loss Analysis
+                  </h3>
                 </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded">
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200/60">
                   Pure Spread Only
                 </span>
               </div>
 
-              {/* Amount Lost Card - STRICTLY EXCLUDING GST & FEES */}
-              <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-4">
-                <span className="text-xs font-semibold text-amber-900 block mb-1">
-                  {tradeAction === 'BUY' ? 'Pure Conversion Spread Loss' : 'Payout Shortfall / Loss'}
-                </span>
-                <div className="font-mono font-black text-2xl text-amber-950 flex items-baseline gap-2">
-                  <span>
-                    - {getCurrencySymbol(sourceCurrency === 'USD' && targetCurrency === 'VND' ? 'VND' : (tradeAction === 'SELL' ? targetCurrency : sourceCurrency))} {formatNum(calculations.pureSpreadLoss, 2)}
-                  </span>
-                  <span className="text-sm font-bold text-amber-800">
-                    (-{formatNum(calculations.pureLossPercentage, 2)}%)
+              {/* Pure Spread Loss Card */}
+              <div className="p-4 rounded-xl bg-amber-50/60 border border-amber-200/70">
+                <div className="text-xs font-semibold text-amber-900 mb-1 flex items-center justify-between">
+                  <span>{actionType === 'buy' ? 'Pure Conversion Spread Loss' : 'Payout Shortfall / Loss'}</span>
+                  <span className="font-mono font-bold">
+                    {calculation.isFavorable
+                      ? '(Better than Interbank)'
+                      : `(-${calculation.pureSpreadPercent.toFixed(2)}%)`}
                   </span>
                 </div>
-                <p className="text-[11px] text-amber-800 mt-2 leading-relaxed">
-                  Based purely on the quoted exchange rate vs the live interbank reference ({formatNum(marketBenchmarkRate, 2)}). This measures pure conversion friction without GST or service charges.
+                
+                <div className="text-2xl font-black font-mono text-amber-950 my-1">
+                  {calculation.isFavorable ? (
+                    <span className="text-emerald-700">+ Favorable Exchange Rate</span>
+                  ) : (
+                    <span>
+                      - {actionType === 'buy' ? sourceSymbol : targetSymbol}
+                      {calculation.pureSpreadLoss >= 1000
+                        ? Math.round(calculation.pureSpreadLoss).toLocaleString()
+                        : calculation.pureSpreadLoss.toFixed(2)}
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-amber-800/80 leading-relaxed">
+                  Based purely on the quoted exchange rate vs the live interbank reference (
+                  {liveInterbankRate > 0 ? liveInterbankRate.toFixed(2) : '--'}
+                  ). This measures pure conversion friction <strong>without GST or service charges</strong>.
                 </p>
               </div>
 
-              {/* Breakdown Figures */}
-              <div className="space-y-2 text-xs text-slate-600 pt-1">
-                <div className="flex justify-between">
+              {/* Spread comparison table */}
+              <div className="text-xs space-y-2 pt-1 font-mono">
+                <div className="flex justify-between text-slate-600">
                   <span>Interbank Fair Cost (Pure Rate):</span>
-                  <span className="font-mono font-medium text-slate-900">
-                    {formatNum(calculations.pureMarketFairCost, 2)} {sourceCurrency === 'USD' && targetCurrency === 'VND' ? 'VND' : (tradeAction === 'SELL' ? targetCurrency : sourceCurrency)}
+                  <span className="font-semibold text-slate-800">
+                    {actionType === 'buy'
+                      ? `${sourceSymbol}${calculation.fairSourceRequired.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${sourceCurrency}`
+                      : `${targetSymbol}${calculation.fairTargetPayout >= 1000 ? Math.round(calculation.fairTargetPayout).toLocaleString() : calculation.fairTargetPayout.toFixed(2)} ${targetCurrency}`}
                   </span>
                 </div>
 
-                <div className="flex justify-between">
+                <div className="flex justify-between text-slate-600">
                   <span>Dealer Spread Margin:</span>
-                  <span className="font-mono font-semibold text-amber-700">
-                    -{formatNum(calculations.pureLossPercentage, 2)}% deficit
+                  <span className={`font-semibold ${calculation.isFavorable ? 'text-emerald-700' : 'text-amber-700'}`}>
+                    {calculation.isFavorable ? '+' : '-'}
+                    {calculation.pureSpreadPercent.toFixed(2)}% {calculation.isFavorable ? 'favorable' : 'deficit'}
                   </span>
                 </div>
               </div>
 
-              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 space-y-3">
-                <div className="space-y-1">
-                  <span className="font-bold text-slate-800 block text-xs">💡 Travel Note Advice:</span>
-                  <p>• In Vietnam, gold and jewelry shops (Hà Trung in Hanoi or Bến Thành in Saigon) provide the best rates for crisp $100 & $50 bills.</p>
-                  <p>• Damaged, folded, or small bills receive a 1%–4% lower quote as reflected in the dynamic rows above.</p>
-                </div>
-
-                {/* Cost Breakdown by Exchange Method Table */}
-                <div className="pt-2 border-t border-slate-200">
-                  <span className="font-bold text-slate-800 block mb-2 text-xs">
-                    Cost Breakdown by Exchange Method
-                  </span>
-                  <div className="overflow-x-auto -mx-1">
-                    <table className="w-full text-left text-[11px] border border-slate-200 rounded-lg overflow-hidden bg-white">
-                      <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                        <tr>
-                          <th className="py-2 px-2.5">Exchange Venue</th>
-                          <th className="py-2 px-2.5">Direct Fees / Commission</th>
-                          <th className="py-2 px-2.5">Exchange Rate Spread (Loss vs Market)</th>
-                          <th className="py-2 px-2.5">Best Use Case</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-slate-600">
-                        <tr className="hover:bg-emerald-50/40">
-                          <td className="py-2 px-2.5 font-semibold text-slate-900">
-                            Licensed Gold / Jewelry Shops <span className="text-[10px] text-slate-500 font-normal">(e.g., Hà Trung in Hanoi, Bến Thành / Hà Tâm in HCMC)</span>
-                          </td>
-                          <td className="py-2 px-2.5 font-mono text-emerald-700 font-semibold">
-                            0% (No fees)
-                          </td>
-                          <td className="py-2 px-2.5 font-mono text-emerald-700 font-bold">
-                            0.2% – 1% (Closest to official market rate)
-                          </td>
-                          <td className="py-2 px-2.5 text-slate-700">
-                            Best overall value for exchanging USD cash.
-                          </td>
-                        </tr>
-                        <tr className="hover:bg-slate-50">
-                          <td className="py-2 px-2.5 font-semibold text-slate-900">
-                            Local Banks <span className="text-[10px] text-slate-500 font-normal">(Vietcombank, BIDV, Techcombank)</span>
-                          </td>
-                          <td className="py-2 px-2.5 font-mono text-slate-700">
-                            0% – 1% (usually built into buy rate)
-                          </td>
-                          <td className="py-2 px-2.5 font-mono text-amber-700 font-bold">
-                            1% – 2.5%
-                          </td>
-                          <td className="py-2 px-2.5 text-slate-700">
-                            Safe, official receipt provided; requires passport.
-                          </td>
-                        </tr>
-                        <tr className="hover:bg-amber-50/40">
-                          <td className="py-2 px-2.5 font-semibold text-slate-900">
-                            Airport Exchange Booths
-                          </td>
-                          <td className="py-2 px-2.5 font-mono text-slate-700">
-                            Usually 0% declared fee
-                          </td>
-                          <td className="py-2 px-2.5 font-mono text-amber-700 font-bold">
-                            3% – 6% (Poor rates)
-                          </td>
-                          <td className="py-2 px-2.5 text-slate-700">
-                            Only exchange $20–$50 for immediate transport.
-                          </td>
-                        </tr>
-                        <tr className="hover:bg-rose-50/40">
-                          <td className="py-2 px-2.5 font-semibold text-slate-900">
-                            Hotels & Tour Desks
-                          </td>
-                          <td className="py-2 px-2.5 font-mono text-slate-700">
-                            Usually 0% declared fee
-                          </td>
-                          <td className="py-2 px-2.5 font-mono text-rose-700 font-bold">
-                            4% – 7% (Worst rates)
-                          </td>
-                          <td className="py-2 px-2.5 text-slate-700">
-                            Emergency convenience only.
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
+              {/* Vietnam Travel Tips & Cost Breakdown Comparison Table */}
+              <div className="mt-4 pt-4 border-t border-slate-100">
+                <div className="bg-slate-50 rounded-xl p-4 border border-slate-200/80 text-xs text-slate-600 space-y-3">
+                  <div className="flex items-center gap-1.5 font-bold text-slate-800 text-xs">
+                    <Info className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>💡 Travel Note Advice</span>
                   </div>
-                </div>
 
-                {/* Hidden Penalties & ATM Advisory */}
-                <div className="pt-3 border-t border-slate-200 space-y-3">
-                  <div className="space-y-1.5">
-                    <span className="font-bold text-slate-800 block text-xs">
-                      ⚠️ Hidden "Penalties" to Watch Out For
-                    </span>
-                    <p className="text-slate-600 leading-relaxed text-[11px]">
+                  {/* Cost Breakdown by Exchange Method Table */}
+                  <div>
+                    <h4 className="font-bold text-slate-800 mb-2">Cost Breakdown by Exchange Method</h4>
+                    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                      <table className="w-full text-left text-[11px] border-collapse min-w-[500px]">
+                        <thead className="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200">
+                          <tr>
+                            <th className="py-2 px-2.5">Exchange Venue</th>
+                            <th className="py-2 px-2.5">Direct Fees / Commission</th>
+                            <th className="py-2 px-2.5">Exchange Rate Spread (Loss vs Market)</th>
+                            <th className="py-2 px-2.5">Best Use Case</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          <tr>
+                            <td className="py-2 px-2.5 font-semibold text-slate-900">
+                              Licensed Gold / Jewelry Shops <span className="text-[10px] text-slate-400 font-normal block">(e.g., Ha Trung in Hanoi, Ben Thanh / Ha Tam in HCMC)</span>
+                            </td>
+                            <td className="py-2 px-2.5 text-emerald-700 font-medium">0% (No fees)</td>
+                            <td className="py-2 px-2.5 text-emerald-700 font-semibold">0.2% – 1% <span className="text-[10px] text-slate-400 font-normal block">(Closest to official market rate)</span></td>
+                            <td className="py-2 px-2.5 text-slate-600">Best overall value for exchanging USD cash.</td>
+                          </tr>
+                          <tr>
+                            <td className="py-2 px-2.5 font-semibold text-slate-900">
+                              Local Banks <span className="text-[10px] text-slate-400 font-normal block">(Vietcombank, BIDV, Techcombank)</span>
+                            </td>
+                            <td className="py-2 px-2.5 text-slate-700">0% – 1% <span className="text-[10px] text-slate-400 font-normal block">(usually built into the buy rate)</span></td>
+                            <td className="py-2 px-2.5 text-amber-700 font-medium">1% – 2.5%</td>
+                            <td className="py-2 px-2.5 text-slate-600">Safe, official receipt provided; requires passport.</td>
+                          </tr>
+                          <tr>
+                            <td className="py-2 px-2.5 font-semibold text-slate-900">Airport Exchange Booths</td>
+                            <td className="py-2 px-2.5 text-slate-700">Usually 0% declared fee</td>
+                            <td className="py-2 px-2.5 text-rose-700 font-semibold">3% – 6% <span className="text-[10px] text-slate-400 font-normal block">(Poor rates)</span></td>
+                            <td className="py-2 px-2.5 text-slate-600">Only exchange $20–$50 for immediate transport.</td>
+                          </tr>
+                          <tr>
+                            <td className="py-2 px-2.5 font-semibold text-slate-900">Hotels & Tour Desks</td>
+                            <td className="py-2 px-2.5 text-slate-700">Usually 0% declared fee</td>
+                            <td className="py-2 px-2.5 text-rose-800 font-semibold">4% – 7% <span className="text-[10px] text-slate-400 font-normal block">(Worst rates)</span></td>
+                            <td className="py-2 px-2.5 text-slate-600">Emergency convenience only.</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Hidden Penalties to Watch Out For */}
+                  <div className="pt-2 border-t border-slate-200/60 space-y-2">
+                    <h4 className="font-bold text-slate-800">Hidden "Penalties" to Watch Out For</h4>
+                    <p className="text-[11px] text-slate-600">
                       While you won't see a surcharge line item on a bill, currency changers in Vietnam strictly adjust rates based on banknote quality:
                     </p>
-                    <ul className="space-y-1.5 pl-3 border-l-2 border-amber-300 text-[11px] text-slate-600">
+                    <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-600">
                       <li>
-                        <strong className="text-slate-800">Denomination Penalty:</strong>
-                        <div className="pl-2 mt-0.5 space-y-0.5">
-                          <p>• <strong>$100 and $50 notes</strong> fetch the highest exchange rates.</p>
-                          <p>• <strong>$1, $5, $10, and $20 notes</strong> often receive a <strong>1% to 3% lower exchange rate</strong> because they are costlier for local vendors to handle.</p>
-                        </div>
+                        <strong>Denomination Penalty:</strong> $100 and $50 notes fetch the highest exchange rates. $1, $5, $10, and $20 notes often receive a 1% to 3% lower exchange rate because they are costlier for local vendors to handle.
                       </li>
                       <li>
-                        <strong className="text-slate-800">Condition / Tear Penalty:</strong>
-                        <div className="pl-2 mt-0.5 space-y-0.5">
-                          <p>• Bills must be <strong>crisp and clean</strong>.</p>
-                          <p>• Any ink marks, stamps, tears, folds, or old series notes (especially pre-2013 $100 bills) will either be <strong>rejected outright</strong> or penalized with a <strong>2%–5% cut</strong>.</p>
-                        </div>
+                        <strong>Condition / Tear Penalty:</strong> Bills must be crisp and clean. Any ink marks, stamps, tears, folds, or old series notes (especially pre-2013 $100 bills) will either be rejected outright or penalized with a 2%–5% cut.
                       </li>
                     </ul>
                   </div>
 
-                  <div className="p-2.5 rounded-lg bg-teal-50/70 border border-teal-200 text-[11px] space-y-1 text-teal-950">
-                    <span className="font-bold text-teal-900 block text-xs">
-                      🏧 Alternative: Using ATMs in Vietnam
-                    </span>
-                    <p className="text-teal-800">
+                  {/* Alternative: Using ATMs in Vietnam */}
+                  <div className="pt-2 border-t border-slate-200/60 space-y-1.5">
+                    <h4 className="font-bold text-slate-800">Alternative: Using ATMs in Vietnam</h4>
+                    <p className="text-[11px] text-slate-600">
                       If you withdraw VND directly from an ATM using an international debit/forex card:
                     </p>
-                    <ul className="space-y-1 pl-3 list-disc marker:text-teal-600 text-teal-900">
+                    <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-600">
                       <li>
-                        <strong>Local ATM Operator Fee:</strong> 20,000 to 55,000 VND (~$0.80 – $2.20 USD) per transaction (some banks like <em>VPBank</em> or <em>TPBank</em> may charge zero).
+                        <strong>Local ATM Operator Fee:</strong> 20,000 to 55,000 VND (~$0.80 – $2.20 USD) per transaction (some banks like VPBank or TPBank may charge zero).
                       </li>
                       <li>
-                        <strong>Dynamic Currency Conversion (DCC):</strong> Always select <strong>"Decline Conversion" / "Charge in VND"</strong> at the ATM screen so your card's base network rate applies.
+                        <strong>Dynamic Currency Conversion (DCC):</strong> Always select <em>"Decline Conversion"</em> / <em>"Charge in VND"</em> at the ATM screen so your card's base network rate applies.
                       </li>
                     </ul>
                   </div>
                 </div>
-
               </div>
             </div>
           </div>
-
         </div>
 
-        {/* ================= ON-THE-GO QUICK POCKET CONVERTER ================= */}
-        <div className="bg-white rounded-2xl border border-slate-200/90 p-5 sm:p-6 shadow-xs">
-          <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100">
-            <div className="flex items-center gap-2">
-              <Calculator className="w-5 h-5 text-teal-600" />
-              <h3 className="font-bold text-slate-900 text-sm">Quick Pocket Street Converter</h3>
+        {/* ================= STEP 3: QUICK POCKET CONVERTER ================= */}
+        <section className="bg-white rounded-2xl border border-slate-200/90 p-5 sm:p-6 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 mb-4 border-b border-slate-100">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Coins className="w-5 h-5 text-emerald-600" />
+                <span>Quick Pocket Converter</span>
+              </h2>
+              <p className="text-xs text-slate-500">
+                Instant street calculator using current live market rates for day-to-day shopping.
+              </p>
             </div>
-            <span className="text-xs text-slate-400">Instant Spot Rate</span>
+
+            {/* Quick Amount Chips */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {[50000, 100000, 200000, 500000, 1000000].map(val => (
+                <button
+                  key={val}
+                  onClick={() => {
+                    setPocketAmount(val);
+                    setPocketFrom('VND');
+                    setPocketTo('INR');
+                  }}
+                  className="px-2 py-1 text-[11px] font-mono font-medium rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors border border-slate-200"
+                >
+                  {(val / 1000).toFixed(0)}k ₫
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
-            {/* Input Amount */}
-            <div className="sm:col-span-5">
-              <label className="text-xs text-slate-500 font-semibold mb-1 block">You Enter</label>
-              <div className="flex gap-2">
-                <input
-                  type="number"
-                  min="0"
-                  value={quickAmount}
-                  onChange={(e) => setQuickAmount(parseFloat(e.target.value) || 0)}
-                  className="flex-1 px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-900 text-base focus:outline-none focus:ring-2 focus:ring-teal-500"
-                />
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+            
+            {/* Input From */}
+            <div className="md:col-span-5 bg-slate-50 p-3.5 rounded-xl border border-slate-200/80">
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-xs font-semibold text-slate-600 uppercase">You Have</span>
                 <select
-                  value={quickFrom}
-                  onChange={(e) => setQuickFrom(e.target.value)}
-                  className="w-24 px-2 py-2 bg-slate-100 border border-slate-300 rounded-xl font-bold text-slate-800 text-xs cursor-pointer"
+                  value={pocketFrom}
+                  onChange={(e) => setPocketFrom(e.target.value)}
+                  className="bg-white border border-slate-300 rounded px-2 py-0.5 text-xs font-bold text-slate-800"
                 >
-                  <option value="INR">INR (₹)</option>
-                  <option value="USD">USD ($)</option>
-                  <option value="VND">VND (₫)</option>
+                  {CURRENCIES.map(c => (
+                    <option key={c.code} value={c.code}>{c.code}</option>
+                  ))}
                 </select>
               </div>
+              <input
+                type="number"
+                value={pocketAmount}
+                onChange={(e) => setPocketAmount(Math.max(0, parseFloat(e.target.value) || 0))}
+                className="w-full text-xl font-bold font-mono text-slate-900 bg-transparent outline-hidden"
+                placeholder="0"
+              />
             </div>
 
-            {/* Swap */}
-            <div className="sm:col-span-2 flex justify-center pt-4 sm:pt-0">
+            {/* Swap Button */}
+            <div className="md:col-span-2 flex justify-center">
               <button
                 type="button"
                 onClick={() => {
-                  const t = quickFrom;
-                  setQuickFrom(quickTo);
-                  setQuickTo(t);
+                  const t = pocketFrom;
+                  setPocketFrom(pocketTo);
+                  setPocketTo(t);
                 }}
-                className="p-2 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-full transition cursor-pointer"
-                title="Swap"
+                className="p-3 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-colors cursor-pointer"
+                title="Swap pocket converter currencies"
               >
-                <ArrowRightLeft className="w-4 h-4 text-slate-600" />
+                <ArrowLeftRight className="w-4 h-4 text-emerald-600" />
               </button>
             </div>
 
-            {/* Output Amount */}
-            <div className="sm:col-span-5">
-              <label className="text-xs text-slate-500 font-semibold mb-1 block">Instant Conversion</label>
-              <div className="flex gap-2">
-                <div className="flex-1 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-xl font-mono font-extrabold text-emerald-950 text-base flex items-center overflow-x-auto">
-                  {formatNum(quickConverted, quickTo === 'VND' ? 0 : 2)}
-                </div>
+            {/* Output To */}
+            <div className="md:col-span-5 bg-emerald-50/70 p-3.5 rounded-xl border border-emerald-200/80">
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-xs font-semibold text-emerald-800 uppercase">Equals Approx</span>
                 <select
-                  value={quickTo}
-                  onChange={(e) => setQuickTo(e.target.value)}
-                  className="w-24 px-2 py-2 bg-slate-100 border border-slate-300 rounded-xl font-bold text-slate-800 text-xs cursor-pointer"
+                  value={pocketTo}
+                  onChange={(e) => setPocketTo(e.target.value)}
+                  className="bg-white border border-emerald-300 rounded px-2 py-0.5 text-xs font-bold text-emerald-800"
                 >
-                  <option value="VND">VND (₫)</option>
-                  <option value="INR">INR (₹)</option>
-                  <option value="USD">USD ($)</option>
+                  {CURRENCIES.map(c => (
+                    <option key={c.code} value={c.code}>{c.code}</option>
+                  ))}
                 </select>
+              </div>
+              <div className="text-xl font-bold font-mono text-emerald-950 truncate">
+                {CURRENCIES.find(c => c.code === pocketTo)?.symbol}
+                {pocketResult >= 1000 ? Math.round(pocketResult).toLocaleString() : pocketResult.toFixed(2)}
               </div>
             </div>
           </div>
-        </div>
+        </section>
 
       </main>
 
-      {/* Footer */}
-      <footer className="max-w-6xl mx-auto px-4 mt-12 pt-6 border-t border-slate-200 text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
-        <div>
-          <span className="font-semibold text-slate-700">My Travel Forex Calculator</span> — Self-contained & ready for Vercel deployment.
-        </div>
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-emerald-600" />
-          <span>Real-time Interbank Benchmark Rates</span>
-        </div>
+      {/* ================= FOOTER ================= */}
+      <footer className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 mt-12 text-center text-xs text-slate-400">
+        <p>My Travel Forex Calculator • Personal Travel Utility for India & Vietnam</p>
+        <p className="mt-1 text-[11px] text-slate-400">
+          Rates refresh from live interbank data. Verify local shop licenses and physical banknote authenticity before completing currency transactions.
+        </p>
       </footer>
     </div>
   );
